@@ -1,0 +1,101 @@
+{
+ "blocks": [
+  {
+   "deleted": false,
+   "duration": 2.3000000000000007,
+   "end": 102.3,
+   "id": "a-001",
+   "source_end": 12.3,
+   "source_start": 10.0,
+   "speaker": "A",
+   "start": 100.0,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 2.6999999999999993,
+   "end": 106.2,
+   "id": "a-001-split-x",
+   "source_end": 15.0,
+   "source_start": 12.3,
+   "speaker": "A",
+   "start": 103.5,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 1.0,
+   "end": 102.0,
+   "id": "b-001",
+   "source_end": 1.0,
+   "source_start": 0.0,
+   "speaker": "B",
+   "start": 101.0,
+   "text": ""
+  }
+ ],
+ "description": "\u5206\u5272\u8de8\u304e: 1\u30bb\u30b0\u30e1\u30f3\u30c8\u304c\u5206\u5272\u30d6\u30ed\u30c3\u30af2\u3064\u306b\u5272\u308c\u308b\uff08\u884c\u30ad\u30fc=segment.id+blockId\uff09",
+ "expected_segments": [
+  {
+   "blockId": "a-001",
+   "end": 100.9,
+   "id": "a-tr-2",
+   "speaker": "A",
+   "start": 100.2,
+   "text": "left only"
+  },
+  {
+   "blockId": "b-001",
+   "end": 101.8,
+   "id": "b-tr-1",
+   "speaker": "B",
+   "start": 101.2,
+   "text": "b"
+  },
+  {
+   "blockId": "a-001",
+   "end": 102.3,
+   "id": "a-tr-1",
+   "speaker": "A",
+   "start": 101.5,
+   "text": "spans the split"
+  },
+  {
+   "blockId": "a-001-split-x",
+   "end": 104.4,
+   "id": "a-tr-1",
+   "speaker": "A",
+   "start": 103.5,
+   "text": ""
+  }
+ ],
+ "transcripts": [
+  {
+   "block_id": null,
+   "id": "a-tr-1",
+   "source_end": 13.2,
+   "source_start": 11.5,
+   "speaker": "A",
+   "text": "spans the split",
+   "words": []
+  },
+  {
+   "block_id": null,
+   "id": "a-tr-2",
+   "source_end": 10.9,
+   "source_start": 10.2,
+   "speaker": "A",
+   "text": "left only",
+   "words": []
+  },
+  {
+   "block_id": null,
+   "id": "b-tr-1",
+   "source_end": 0.8,
+   "source_start": 0.2,
+   "speaker": "B",
+   "text": "b",
+   "words": []
+  }
+ ]
+}

@@ -1,0 +1,92 @@
+{
+ "blocks": [
+  {
+   "deleted": false,
+   "duration": 0.8,
+   "end": 100.8,
+   "id": "a-001",
+   "source_end": 0.8,
+   "source_start": 0.0,
+   "speaker": "A",
+   "start": 100.0,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 1.0,
+   "end": 101.5,
+   "id": "b-001",
+   "source_end": 11.0,
+   "source_start": 10.0,
+   "speaker": "B",
+   "start": 100.5,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 1.0,
+   "end": 1.0,
+   "id": "a-002",
+   "source_end": 2.0,
+   "source_start": 1.0,
+   "speaker": "A",
+   "start": 0.0,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 1.0,
+   "end": 1.7,
+   "id": "b-002",
+   "source_end": 13.0,
+   "source_start": 12.0,
+   "speaker": "B",
+   "start": 0.7,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 2.0,
+   "end": 202.0,
+   "id": "a-003",
+   "source_end": 5.0,
+   "source_start": 3.0,
+   "speaker": "A",
+   "start": 200.0,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 2.0,
+   "end": 202.0,
+   "id": "b-003",
+   "source_end": 16.0,
+   "source_start": 14.0,
+   "speaker": "B",
+   "start": 200.0,
+   "text": ""
+  }
+ ],
+ "description": "min_overlap_s=0.3 \u5883\u754c\u306e\u6d6e\u52d5\u5c0f\u6570\u70b9\u5b9f\u6319\u52d5\uff08Python\u3068JS\u3067\u540c\u4e00\u306eIEEE754\u6f14\u7b97\uff09",
+ "expected_overlaps": [
+  {
+   "block_ids": [
+    "a-002",
+    "b-002"
+   ],
+   "duration": 0.3,
+   "end": 1.0,
+   "start": 0.7
+  },
+  {
+   "block_ids": [
+    "a-003",
+    "b-003"
+   ],
+   "duration": 2.0,
+   "end": 202.0,
+   "start": 200.0
+  }
+ ],
+ "min_overlap_s": 0.3
+}

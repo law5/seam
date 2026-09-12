@@ -1,0 +1,85 @@
+{
+ "blocks": [
+  {
+   "deleted": false,
+   "duration": 2.0,
+   "end": 2.0,
+   "id": "a-001",
+   "source_end": 2.0,
+   "source_start": 0.0,
+   "speaker": "A",
+   "start": 0.0,
+   "text": ""
+  },
+  {
+   "deleted": true,
+   "duration": 2.0,
+   "end": 4.0,
+   "id": "a-002",
+   "source_end": 4.0,
+   "source_start": 2.0,
+   "speaker": "A",
+   "start": 2.0,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 2.0,
+   "end": 6.0,
+   "id": "a-003",
+   "source_end": 6.0,
+   "source_start": 4.0,
+   "speaker": "A",
+   "start": 4.0,
+   "text": ""
+  }
+ ],
+ "description": "deleted\u9664\u5916: \u524a\u9664\u30d6\u30ed\u30c3\u30af\u4e0a\u306e\u884c\u306f\u6d88\u3048\u308b\u30fb\u90e8\u5206\u4ea4\u5dee\u306f\u6b8b\u308b",
+ "expected_segments": [
+  {
+   "blockId": "a-001",
+   "end": 2.0,
+   "id": "a-tr-1",
+   "speaker": "A",
+   "start": 1.0,
+   "text": "partly deleted"
+  },
+  {
+   "blockId": "a-003",
+   "end": 4.5,
+   "id": "a-tr-3",
+   "speaker": "A",
+   "start": 4.0,
+   "text": "tail"
+  }
+ ],
+ "transcripts": [
+  {
+   "block_id": null,
+   "id": "a-tr-1",
+   "source_end": 3.0,
+   "source_start": 1.0,
+   "speaker": "A",
+   "text": "partly deleted",
+   "words": []
+  },
+  {
+   "block_id": null,
+   "id": "a-tr-2",
+   "source_end": 3.8,
+   "source_start": 2.2,
+   "speaker": "A",
+   "text": "fully on deleted",
+   "words": []
+  },
+  {
+   "block_id": null,
+   "id": "a-tr-3",
+   "source_end": 4.5,
+   "source_start": 3.5,
+   "speaker": "A",
+   "text": "tail",
+   "words": []
+  }
+ ]
+}

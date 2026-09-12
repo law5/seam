@@ -1,0 +1,17 @@
+.podcast_prep/
+.claude/
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+dist/
+build/
+*.egg-info/
+
+# 検証用サンプル音源（コミットしない）
+sample/
+
+# 設計時の中間生成物（ローカル参照用。配布物には含めない）
+DESIGN_*.md

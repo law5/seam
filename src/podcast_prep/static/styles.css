@@ -1,0 +1,2068 @@
+/* podcast-prep — Apple HIG準拠テーマ（Issue #14, 2026-08改訂 / Issue #59 パレット一元化）。
+   設計原則:
+   - macOS セマンティックカラー体系を CSS 変数で構築（label / secondary-label /
+     separator / control / accent）。アクセント = Ink（中立の主行動色）。
+     ※ #59 でシステムブルー #007aff から Ink に変更。青は白背景で 4.02 しかなく
+       WCAG AA 未達だった（Ink は 17.76）。変数名は維持し値だけ差し替えている。
+   - 「Seam（継ぎ目）」= 被り・再生ヘッド・フォーカス専用の橙系。--alert と現状同値だが
+     意味が違う（alert=危険 / seam=継ぎ目）ので変数を分けている。
+   - 話者色（A=ティール / B=アンバー）は従来のアイデンティティを維持し、
+     ライト/ダーク両テーマで機能するよう明度を調整。
+   - ダークモードは prefers-color-scheme で自動追従（:root 変数の一括差し替え）。
+     canvas 側は waveform.js の THEME_COLORS（applyThemeColors で切替。契約 §2-3）。
+   - 余白は 8pt グリッド（4pt 半歩を許容）。タイポは HIG Type Scale 準拠。
+   - Webフォント禁止 — システムフォントスタック（SF Pro 相当）で実現。 */
+
+:root {
+  color-scheme: light;
+
+  /* ── ベース面（macOS: windowBackground / controlBackground） ── */
+  --window-bg: #f1f0ed;      /* アプリ地色（わずかに暖かい紙） */
+  --content-bg: #ffffff;     /* パネル・コントロール面 */
+  --content-bg-2: #f4f3f0;   /* 面の段差・ルーラー地・サブヘッダ */
+
+  /* ── ラベル（macOS: labelColor 系） ── */
+  /* secondary は α ではなく実色。α だと乗る地でコントラストが変わる
+     （白の上 4.9 / #f4f3f0 の上 4.7）。実色なら 6.32 / 5.70 で常に AA 超え。 */
+  --label: #16181d;
+  --secondary-label: #5b6069;
+  --tertiary-label: rgba(60, 64, 73, 0.42);
+
+  /* ── 区切り・枠 ── */
+  --separator: rgba(60, 60, 67, 0.12);
+  --separator-strong: rgba(60, 60, 67, 0.2);
+
+  /* ── アクセント（accentColor = Ink。中立の主行動色） ── */
+  --accent: #16181d;
+  --accent-hover: #2b2f37;
+  --accent-soft: rgba(22, 24, 29, 0.08);
+  --selected-bg: rgba(22, 24, 29, 0.055);
+  --focus-ring: rgba(178, 58, 10, 0.55);  /* フォーカスは「注意」なので Seam 系 */
+  --on-accent: #ffffff;
+
+  /* ── コントロール（bordered button / input） ── */
+  --control-bg: #ffffff;
+  --control-border: rgba(0, 0, 0, 0.14);
+  --control-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.12);
+  --hover-fill: rgba(0, 0, 0, 0.045);
+  --pressed-fill: rgba(0, 0, 0, 0.08);
+  --segment-track: rgba(0, 0, 0, 0.055);
+
+  /* ── 話者色（この2色が話者識別の彩度を担う。waveform.js THEME_COLORS と同系） ── */
+  --spk-a: #0b6a60;
+  --spk-a-soft: rgba(11, 106, 96, 0.14);
+  --spk-b: #8a5310;
+  --spk-b-soft: rgba(138, 83, 16, 0.14);
+
+  /* ── 状態色 ── */
+  --alert: #b23a0a;
+  --alert-soft: rgba(178, 58, 10, 0.14);
+  --ok: #1f7a35;
+  --ok-soft: rgba(31, 122, 53, 0.14);
+
+  /* ── Seam（継ぎ目）: 被り・再生ヘッド・フォーカス専用。ボタンには使わない。
+     --alert と現状同値だが、意味が違うので変数を分ける（将来の分離のため） ── */
+  --seam: #b23a0a;
+  --seam-soft: rgba(178, 58, 10, 0.14);
+  --voice-a-edge: #0b6a60;   /* 構造のエッジ用（= --spk-a。用途を名前で固定） */
+  --voice-b-edge: #8a5310;
+
+  /* ── HUD（トースト・ドラッグ表示。両テーマ共通の浮遊面） ── */
+  --hud-bg: rgba(28, 28, 30, 0.92);
+  --hud-label: rgba(255, 255, 255, 0.95);
+
+  /* ── 影・角丸・スクリム ── */
+  --radius: 10px;
+  --radius-s: 6px;
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.07);
+  --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.18);
+  --scrim: rgba(0, 0, 0, 0.35);
+
+  /* SF Pro 相当のシステムスタック（オフライン完結・Webフォント禁止） */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Segoe UI", Meiryo, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --window-bg: #14161a;
+    --content-bg: #1c1f24;
+    --content-bg-2: #23262c;
+
+    --label: #e8e6e1;
+    --secondary-label: #9aa0a9;
+    --tertiary-label: rgba(154, 160, 169, 0.45);
+
+    --separator: rgba(235, 235, 245, 0.12);
+    --separator-strong: rgba(235, 235, 245, 0.2);
+
+    /* ダークでは Ink = 明色。--on-accent を暗色に上書きしないと primary の文字が飛ぶ */
+    --accent: #e8e6e1;
+    --accent-hover: #ffffff;
+    --accent-soft: rgba(232, 230, 225, 0.12);
+    --selected-bg: rgba(232, 230, 225, 0.08);
+    --focus-ring: rgba(255, 122, 69, 0.6);
+    --on-accent: #14161a;
+
+    --control-bg: rgba(255, 255, 255, 0.1);
+    --control-border: rgba(255, 255, 255, 0.08);
+    --control-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.4);
+    --hover-fill: rgba(255, 255, 255, 0.07);
+    --pressed-fill: rgba(255, 255, 255, 0.12);
+    --segment-track: rgba(255, 255, 255, 0.08);
+
+    --spk-a: #4fc9b8;
+    --spk-a-soft: rgba(79, 201, 184, 0.16);
+    --spk-b: #e8a94f;
+    --spk-b-soft: rgba(232, 169, 79, 0.16);
+
+    --alert: #ff7a45;
+    --alert-soft: rgba(255, 122, 69, 0.18);
+    --ok: #41c96a;
+    --ok-soft: rgba(65, 201, 106, 0.16);
+
+    --seam: #ff7a45;
+    --seam-soft: rgba(255, 122, 69, 0.18);
+    --voice-a-edge: #4fc9b8;
+    --voice-b-edge: #e8a94f;
+
+    --hud-bg: rgba(44, 44, 46, 0.95);
+    --hud-label: rgba(255, 255, 255, 0.95);
+
+    --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 16px 40px rgba(0, 0, 0, 0.6);
+    --scrim: rgba(0, 0, 0, 0.5);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  /* #59: min-width は持たない。@media は「スクロールバーを含む」ビューポート幅で
+     判定するのに対し、min-width は「スクロールバーを除く」レイアウト幅に効くため、
+     両者の基準がずれる。min-width:900px を置くと、クラシックスクロールバー環境
+     （実測 sbw=15px）では 901〜914px の帯で @media (max-width:900px) が外れたまま
+     レイアウト幅が 900px を下回り、最大 14px の横スクロールが残った
+     （macOS のオーバーレイスクロールバー sbw=0 では露出しないため実機確認を
+     すり抜ける）。境界に sbw の実測値を焼き込むのは環境依存なので採らない。
+     畳みは .lower の max-width:1043px 分岐と 900px 分岐が担うので、
+     下限幅を CSS で固定する役割は既にない */
+  margin: 0;
+  color: var(--label);
+  background: var(--window-bg);
+  font-size: 13px; /* HIG Body (macOS: 13pt) */
+  line-height: 1.5;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* ── コントロール体系（HIG ボタン階層）:
+     既定 = Bordered（枠+微影） / .primary = accent塗り / .ghost = Borderless /
+     .danger = 破壊操作（赤ラベル） ─────────────────────── */
+
+button,
+.button,
+input,
+select,
+output {
+  font: inherit;
+}
+
+button,
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-s);
+  padding: 0 12px;
+  color: var(--label);
+  background: var(--control-bg);
+  box-shadow: var(--control-shadow);
+  cursor: pointer;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+button:hover:not(:disabled),
+.button:hover {
+  background: var(--content-bg-2);
+}
+
+@media (prefers-color-scheme: dark) {
+  button:hover:not(:disabled),
+  .button:hover {
+    background: rgba(255, 255, 255, 0.14);
+  }
+}
+
+button:active:not(:disabled),
+.button:active {
+  background: var(--pressed-fill);
+}
+
+button.primary,
+.button.primary {
+  border-color: transparent;
+  color: var(--on-accent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0) 55%),
+    var(--accent);
+  box-shadow: 0 1px 2.5px rgba(0, 0, 0, 0.18);
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0) 55%),
+    var(--accent-hover);
+}
+
+button.ghost,
+.button.ghost {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+button.ghost:hover:not(:disabled),
+.button.ghost:hover {
+  background: var(--hover-fill);
+  border-color: transparent;
+}
+
+/* 「全体」トグル（#21）: フィット表示中は accent 塗りで押下状態を示す（.ms.active と同系） */
+#fitZoom[aria-pressed="true"] {
+  border-color: transparent;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+button.danger {
+  color: var(--alert);
+}
+
+button.danger:hover:not(:disabled) {
+  background: var(--alert-soft);
+  border-color: transparent;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.icon-button {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+input[type="search"],
+input[type="text"],
+input[type="number"],
+select {
+  min-height: 28px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-s);
+  padding: 3px 8px;
+  background: var(--content-bg);
+  color: var(--label);
+  transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+input[type="search"]:focus,
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+progress {
+  accent-color: var(--accent);
+}
+
+/* ── topbar（macOS ツールバー相当） ── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  /* #59: 56 → 52px（4px 減）。内寸は 52 - padding 16 = 36px で、
+     最大要素 .app-mark（32px）が収まる。
+     ※ 2段の合計は 104px（56+48）→ 108px（52+56）で +4px 増えている。
+        topbar を 4px 削り、transport には 8px 足しているため */
+  height: 52px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--separator);
+  background: var(--window-bg);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* アプリマーク: accent グラデーションの角丸タイル（アプリアイコン相当） */
+.app-mark {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  /* #59: ハードコードの青グラデ（#4da2ff）を廃し単色 Ink に。
+     ダークでは --accent が明色になるので文字色も変数化する */
+  color: var(--on-accent);
+  background: var(--accent);
+  box-shadow: none;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.project-name {
+  width: 280px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  padding: 4px 8px;
+  font-size: 15px; /* HIG Title3 相当 */
+  font-weight: 600;
+  color: var(--label);
+  background: transparent;
+}
+
+.project-name:hover {
+  border-color: var(--separator);
+}
+
+.project-name:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--content-bg);
+}
+
+/* topbar のジョブチップ（文字起こし・エクスポート・モデル取得等の進行表示） */
+.job-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--separator);
+  border-radius: 999px;
+  background: var(--content-bg);
+  color: var(--secondary-label);
+  font-size: 11px; /* HIG Caption */
+  font-variant-numeric: tabular-nums;
+}
+
+.job-chip progress {
+  width: 130px;
+  height: 6px;
+}
+
+.job-chip .job-progress-label {
+  max-width: 260px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.flow-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* #59: body の min-width を撤去し、幅が実際に詰まる場面が出るようになった。
+     縮むのは .identity（min-width:0 のプロジェクト名入力）側に寄せ、
+     主要操作のラベルは潰さない */
+  flex: none;
+}
+
+/* 保存: 状態表示であって、押すことを勧めるものではない（⌘S と自動保存がある）。
+   panels.js onSaveState が「保存中…」「保存 ✓」「保存」の3状態をラベルで
+   表現済みなので、ここでは装飾を落として "読むもの" として成立させる。
+   要素・ID は維持（main.js:144 click / main.js:818 disabled /
+   panels.js:960 textContent が前提にしている） */
+.save-chip {
+  margin-left: 8px;
+  /* 3状態でラベル幅が変わっても右端が揺れないための固定幅。既存の良い判断を維持 */
+  min-width: 84px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--secondary-label);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 押せることは hover で初めて明かす（progressive disclosure）。
+   .ghost の hover より一段はっきりさせ、枠を出して「ボタンだった」ことを示す */
+.save-chip:hover:not(:disabled) {
+  border-color: var(--separator);
+  background: var(--hover-fill);
+  color: var(--label);
+}
+
+/* プロジェクト未取込時（disabled）の沈み込みは、グローバルな
+   button:disabled { opacity: 0.4 } が担う。.save-chip は既に border/background/
+   box-shadow を透過にしているので、:disabled で same-value に再宣言する必要はない */
+
+/* ── transport ──────────────────────────────────────────── */
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* #59: 48 → 56px（+8px）。PR4 の Seam Strip（20px）が上下 18px の余白を
+     持って収まる高さ。topbar の -4px と合わせて 2段の合計は
+     104px（56+48）→ 108px（52+56）で +4px 増える */
+  height: 56px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--separator);
+  background: var(--window-bg);
+}
+
+.transport-play {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding-right: 12px;
+}
+
+/* ズームと「全体」は同じ区画の中の隣り合わせ（transport 既定の gap:12px より詰める）*/
+.transport #fitZoom {
+  margin-left: -4px;
+}
+
+.play-button {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 50%;
+  color: var(--on-accent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0) 55%),
+    var(--accent);
+  box-shadow: 0 1px 2.5px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+
+.play-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0) 55%),
+    var(--accent-hover);
+}
+
+.skip-button {
+  min-width: 44px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 時刻は「計器」。罫線で囲って transport の中の独立した区画にし、
+   mono + tabular-nums で桁が変わっても文字が動かないようにする */
+.time-readout {
+  flex: none;
+  padding: 0 12px;
+  border-left: 1px solid var(--separator);
+  border-right: 1px solid var(--separator);
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+  font-variant-numeric: tabular-nums;
+  /* mono は既に均等幅なので字送りの補正は不要（was: 0.01em） */
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+/* Seam Strip（#59 PR4）: エピソード全体を圧縮した帯。PR3 が確保した予約席に入る。
+   height は canvas 要素の height 属性と waveform.js の STRIP_H と揃える
+   （CSS で明示しておくと DPR 同期の前でもレイアウトが跳ねない）。
+   min-width は狭い幅で潰れて右側が詰まるのを防ぐため（PR3 から据え置き）。
+   角丸は canvas 側でもクリップしているが、はみ出しの保険として CSS にも置く */
+.seam-strip {
+  flex: 1;
+  height: 20px;
+  min-width: 120px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--secondary-label);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* #59 所見(g): transport 右側の「ズーム」と「全体」は同じ関心（表示倍率）なのに
+   バラバラに浮いていた。罫線で括って左の再生クラスタと釣り合う1区画にする。
+   .compact は取込オーバーレイでも使うので transport 配下だけに効かせる */
+.transport .compact {
+  flex: none;
+  padding-left: 12px;
+  border-left: 1px solid var(--separator);
+}
+
+.compact input[type="range"] {
+  width: 140px;
+}
+
+.compact input[type="number"] {
+  width: 68px;
+}
+
+/* ── タイムライン: 固定ガター + 単一スクロールコンテナ + sticky canvas ── */
+
+.timeline {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  border-bottom: 1px solid var(--separator);
+  background: var(--content-bg);
+  /* 縦が狭い環境で下段リストが長くても、ページをスクロールしたら波形が
+     画面上部に追従して残る（Issue #20 実機FB）。背景は不透明なので下段
+     パネルは下に潜る。z-index はオーバーレイ(30)・コンテキストメニュー(40)・
+     トースト(50) より下、パネル内容(z-auto) より上に置く */
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.track-gutter {
+  display: grid;
+  grid-template-rows: 24px 150px 150px 1fr;
+  border-right: 1px solid var(--separator-strong);
+  background: var(--content-bg-2);
+}
+
+.gutter-ruler {
+  border-bottom: 1px solid var(--separator-strong);
+}
+
+.track-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-bottom: 1px solid var(--separator);
+  user-select: none;
+}
+
+/* 話者タグ: ガター / 文字起こし / トラック設定で共通の色チップ */
+.speaker-tag {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  /* ダークでは話者色が明るいため、タグ内文字は暗色にして可読性を確保 */
+  .speaker-tag {
+    color: rgba(0, 0, 0, 0.78);
+  }
+}
+
+.track-label[data-speaker="A"],
+.track-settings[data-speaker="A"] .settings-title {
+  color: var(--spk-a);
+}
+
+.track-label[data-speaker="B"],
+.track-settings[data-speaker="B"] .settings-title {
+  color: var(--spk-b);
+}
+
+.track-label[data-speaker="A"] .speaker-tag,
+.track-settings[data-speaker="A"] .speaker-tag,
+.slot[data-speaker="A"] .speaker-tag {
+  background: var(--spk-a);
+}
+
+.track-label[data-speaker="B"] .speaker-tag,
+.track-settings[data-speaker="B"] .speaker-tag,
+.slot[data-speaker="B"] .speaker-tag {
+  background: var(--spk-b);
+}
+
+.track-label .ms {
+  width: 24px;
+  min-width: 24px;
+  min-height: 20px;
+  padding: 0;
+  border: 1px solid var(--control-border);
+  border-radius: 5px;
+  color: var(--secondary-label);
+  background: var(--control-bg);
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.track-label .ms.active {
+  border-color: transparent;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.timeline-scroll {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--content-bg);
+}
+
+#tlContent {
+  position: relative;
+  height: 324px; /* 24 + 150 + 150 */
+  min-width: 100%;
+}
+
+#tlContent canvas {
+  position: sticky;
+  left: 0;
+  display: block;
+}
+
+#rulerCanvas {
+  height: 24px;
+}
+
+#trackCanvasA,
+#trackCanvasB {
+  height: 150px;
+}
+
+#playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  width: 2px;
+  /* 「今どこか」は注意の情報なので Seam（waveform.js COLORS.cursor と同色） */
+  background: var(--seam);
+  pointer-events: none;
+  will-change: transform;
+}
+
+#dragReadout {
+  position: absolute;
+  z-index: 4;
+  padding: 2px 8px;
+  border-radius: 5px;
+  color: var(--hud-label);
+  background: var(--hud-bg);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ── 下段3パネル: 中央（文字起こし）が主・左右は支援（HIGインスペクタ相当） ── */
+
+.lower {
+  display: grid;
+  grid-template-columns: 290px minmax(360px, 1fr) 330px;
+  gap: 16px;
+  padding: 16px;
+  align-items: start;
+}
+
+.panel {
+  min-height: 280px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius);
+  background: var(--content-bg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--separator);
+}
+
+.panel-head.sub {
+  min-height: 32px;
+  border-top: 1px solid var(--separator);
+  background: var(--content-bg-2);
+}
+
+/* パネル見出し: HIG インスペクタのセクションヘッダ（11pt / セカンダリ） */
+h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--secondary-label);
+  text-transform: none;
+}
+
+.panel-hint {
+  margin: 0;
+  padding: 6px 12px 0;
+  color: var(--secondary-label);
+  font-size: 11px;
+}
+
+.badge {
+  min-width: 26px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  text-align: center;
+  color: var(--secondary-label);
+  background: var(--segment-track);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge.alert {
+  color: #fff;
+  background: var(--alert);
+}
+
+@media (prefers-color-scheme: dark) {
+  /* ダークの --alert は明色（#ff7a45）なので白文字だと 2.59:1 で AA 未達。
+     暗色（--on-accent）に上書きして 7.00:1 を確保する（.speaker-tag と同じ理屈）。
+     このバッジは #overlapCount = 被り件数で、被りが1件でもあれば常時見えている。 */
+  .badge.alert {
+    color: var(--on-accent);
+  }
+}
+
+.inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── 自動調整（overlaps-panel 先頭・at* ID群） ─────────── */
+
+.auto-tighten {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  font-size: 12px;
+}
+
+.auto-tighten .at-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--label);
+}
+
+.auto-tighten input[type="checkbox"] {
+  margin-right: 2px;
+}
+
+.auto-tighten input[type="number"] {
+  width: 3.8em;
+  min-height: 24px;
+  padding: 2px 4px;
+}
+
+/* 閾値のインライン検証（フィールド直下の赤字。toast ではなく近傍に出す） */
+.at-error {
+  margin: -6px 0 0;
+  color: var(--alert);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.at-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.at-actions button {
+  flex: 1;
+}
+
+.at-summary {
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+  background: var(--content-bg-2);
+  color: var(--label);
+  font-size: 12px;
+  white-space: pre-line;
+}
+
+.at-summary:empty {
+  display: none;
+}
+
+/* ── リスト（被り一覧・文字起こし） ────────────────────── */
+
+.list {
+  max-height: 340px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.list.empty {
+  display: grid;
+  place-items: center;
+  min-height: 96px;
+  color: var(--secondary-label);
+  text-align: center;
+  padding: 16px;
+}
+
+.list-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--separator);
+  padding: 7px 6px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.list-row:hover {
+  background: var(--hover-fill);
+}
+
+/* 被り行: [チェック] 時刻 [分類チップ] */
+.list-row.overlap-row {
+  grid-template-columns: auto 1fr auto;
+  gap: 7px;
+}
+
+.overlap-row .ov-check {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.overlap-row .ov-time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Prev/Next の現在位置: accent の左罫線 + 選択ティント（macOS リスト選択） */
+.overlap-row.cursor {
+  background: var(--selected-bg);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.ov-cat {
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* 分類チップ: 自動解消可だけが accent ティントを持ち、保護3種はグレーの枠のみ
+   （「触らない」ことを視覚的に弱く示す）。不明は破線で「判定できていない」を表す。 */
+.ov-cat.resolvable {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ov-cat.protected {
+  color: var(--secondary-label);
+  background: transparent;
+  border: 1px solid var(--separator-strong);
+}
+
+.ov-cat.unknown {
+  color: var(--secondary-label);
+  background: transparent;
+  border: 1px dashed var(--separator-strong);
+}
+
+/* ── 被り一覧のツールバー（サマリー / 全選択 / Prev・Next） ── */
+
+.ov-toolbar {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+
+.ov-summary {
+  color: var(--secondary-label);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ov-bulk,
+.ov-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ov-position {
+  min-width: 4.2em;
+  text-align: center;
+  color: var(--secondary-label);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+button.tiny {
+  min-height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+/* 一覧のキーボード操作スコープ（←→↑↓ / ADWS。Issue #20）が生きていることの可視化。
+   行クリック（マウス由来のフォーカス）でもキーは効くため、:focus-visible ではなく
+   :focus で常に見せる（見えないままグローバルの S=分割 が奪われるのを防ぐ）。 */
+#overlaps:focus {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: -3px;
+}
+
+/* ── 文字起こしリスト（#transcriptList の行） ──────────── */
+
+#transcriptList {
+  max-height: 440px;
+  padding: 4px 0;
+}
+
+.transcript-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 10px;
+  align-items: baseline;
+  border-bottom: 1px solid var(--separator);
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.transcript-row:hover {
+  background: var(--hover-fill);
+}
+
+.transcript-row.active {
+  background: var(--selected-bg);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.transcript-row .t-time {
+  color: var(--secondary-label);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.transcript-row .t-speaker {
+  min-width: 20px;
+  border-radius: 5px;
+  padding: 0 5px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.transcript-row .t-speaker.sp-a {
+  color: var(--spk-a);
+  background: var(--spk-a-soft);
+}
+
+.transcript-row .t-speaker.sp-b {
+  color: var(--spk-b);
+  background: var(--spk-b-soft);
+}
+
+.block-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--separator);
+}
+
+.block-tools input {
+  min-width: 180px;
+  flex: 1;
+}
+
+.selected {
+  min-height: 40px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--separator);
+  background: var(--content-bg-2);
+  color: var(--secondary-label);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── トラック設定 ──────────────────────────────────────── */
+
+.settings-panel {
+  padding-bottom: 12px;
+}
+
+.track-settings,
+.export-settings,
+.transcribe-settings {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--separator);
+}
+
+.export-settings,
+.transcribe-settings {
+  border-bottom: none;
+}
+
+.track-settings label {
+  display: grid;
+  grid-template-columns: 84px 1fr 58px;
+  align-items: center;
+  gap: 8px;
+  color: var(--secondary-label);
+  font-size: 12px;
+}
+
+.track-settings label:has(input[type="number"]) {
+  grid-template-columns: 84px 1fr;
+}
+
+.track-settings output {
+  text-align: right;
+  color: var(--label);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-settings label,
+.transcribe-settings label {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 8px;
+  color: var(--secondary-label);
+  font-size: 12px;
+}
+
+/* Issue #18: 書き出し先の設定ヒント（環境変数の書き出し先が未設定のときのみ表示） */
+.export-settings .hint {
+  margin: 0;
+  color: var(--tertiary-label, var(--secondary-label));
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.export-settings .hint code {
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--fill-quaternary, rgba(127, 127, 127, 0.16));
+}
+
+/* Issue #32: 出力先のフォルダ選択行（手書き入力を廃止。取込オーバーレイの
+   作業フォルダ行と同じ 選択する / リセット + パス表示の構成） */
+.export-dir-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  color: var(--secondary-label);
+  font-size: 12px;
+}
+
+.export-dir-row .export-path {
+  flex: 1 1 100%;
+}
+
+.settings-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+/* 話者色をスライダーにも通す */
+.track-settings[data-speaker="A"] input[type="range"] {
+  accent-color: var(--spk-a);
+}
+
+.track-settings[data-speaker="B"] input[type="range"] {
+  accent-color: var(--spk-b);
+}
+
+/* Before/After: セグメンテッドコントロール表現（トラック内に埋める） */
+.ab-buttons {
+  /* 他の設定行と同じ「ラベル84px + gap 8px」グリッドに乗せ、
+     セグメント本体の左端をスライダーの先頭に揃える（実機フィードバック） */
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.ab-seg {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--segment-track);
+}
+
+.ab-buttons button {
+  flex: 1;
+  min-height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.ab-buttons button:hover:not(:disabled) {
+  background: var(--content-bg);
+  box-shadow: var(--control-shadow);
+}
+
+/* L: ラウドネス正規化の状態 + 後がけボタン */
+
+.norm-row {
+  display: grid;
+  grid-template-columns: 84px auto 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--secondary-label);
+}
+
+.norm-status {
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--secondary-label);
+  background: var(--segment-track);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.norm-status.done {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.norm-status.todo {
+  color: var(--secondary-label);
+  background: transparent;
+  border: 1px dashed var(--separator-strong);
+}
+
+.norm-row button {
+  justify-self: end;
+}
+
+/* Issue #37: ラウドネス設定（目標LUFS / 最大TP / 許容量を1ブロックに集約。両トラック共通）。
+   3項目を横並びにするためラベルは入力欄の上に置く。align-items: end で
+   ラベルが折り返しても入力欄の高さを揃える */
+
+.loudnorm-settings {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--separator);
+  align-items: end;
+}
+
+.loudnorm-settings label {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  color: var(--secondary-label);
+  font-size: 12px;
+}
+
+.loudnorm-settings input[type="number"] {
+  min-width: 0;
+  width: 100%;
+}
+
+/* ── 文字起こし設定（Issue #12: モデル / 計算精度 / デバイス） ── */
+
+/* グリッド内の select/input は既定の min-width:auto（=最長選択肢の幅）で
+   パネルを突き破るため明示的に潰す（実機フィードバック: 長いモデル名がはみ出す） */
+.transcribe-settings select,
+.transcribe-settings input[type="text"],
+.export-settings select,
+.export-settings input[type="text"] {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.setting-note {
+  overflow-wrap: anywhere;
+}
+
+
+.setting-note {
+  margin: -4px 0 0;
+  padding-left: 104px; /* ラベル列(96px)+gap に揃える */
+  color: var(--secondary-label);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.setting-note.alert-note {
+  color: var(--alert);
+}
+
+.dl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: -4px;
+  padding-left: 104px;
+  flex-wrap: wrap;
+}
+
+.dl-row button {
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.dl-row .dl-status {
+  color: var(--secondary-label);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* G: 書き出し先の表示（エクスポート完了後に出る） */
+
+.export-result {
+  display: grid;
+  gap: 8px;
+  margin: 0 12px 12px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-s);
+  padding: 10px;
+  background: var(--content-bg-2);
+}
+
+.export-result-head {
+  color: var(--secondary-label);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.export-path {
+  overflow-wrap: anywhere;
+  color: var(--label);
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  user-select: all;
+}
+
+.export-result button {
+  justify-self: start;
+}
+
+/* ── 取込オンボーディング / 進捗オーバーレイ（macOS シート相当） ── */
+
+.import-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--scrim);
+}
+
+.import-card {
+  width: min(620px, 100%);
+  border: 1px solid var(--separator);
+  border-radius: 14px;
+  padding: 24px 28px 22px;
+  background: var(--content-bg);
+  box-shadow: var(--shadow-2);
+}
+
+.import-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* 閉じる（×）: 素の ghost icon-button では目に留まらなかったため、一回り大きい
+   円形 + 常時うすい背景で「編集画面に戻れる」ことを示す（他所の icon-button には波及させない） */
+.import-close {
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border-color: var(--control-border);
+  border-radius: 50%;
+  color: var(--secondary-label);
+  background: var(--content-bg-2);
+  box-shadow: none;
+  font-size: 16px;
+}
+
+.import-close:hover:not(:disabled) {
+  color: var(--label);
+  background: var(--hover-fill);
+}
+
+/* HIG Large Title 相当 */
+.import-card h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--label);
+}
+
+/* 主題を一行で。h1 の直後に置いて「何をする画面か」を先に読ませる */
+.import-subtitle {
+  margin: 6px 0 0;
+  color: var(--secondary-label);
+  font-size: 13px;
+}
+
+.flow-guide {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0 20px;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  color: var(--secondary-label);
+}
+
+.flow-guide li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.flow-guide li:not(:last-child)::after {
+  content: "";
+  flex: 1;
+  min-width: 8px;
+  height: 1px;
+  background: var(--separator-strong);
+  margin: 0 2px;
+}
+
+.flow-guide b {
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--tertiary-label);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* 丸数字は「順序」、塗りは「現在地」を表す。取込オーバーレイは常に1段目なので
+   .current は HTML に静的に置く（JS なし）。色に頼らないため aria-current + 太字も併用 */
+.flow-guide li.current {
+  color: var(--label);
+  font-weight: 600;
+}
+
+.flow-guide li.current b {
+  border-color: transparent;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.drop-zone {
+  display: grid;
+  gap: 16px;
+  border: 2px dashed var(--separator-strong);
+  border-radius: 12px;
+  padding: 24px 20px 18px;
+  background: var(--content-bg-2);
+  text-align: center;
+  transition: border-color 120ms ease-out, background-color 120ms ease-out;
+}
+
+.drop-zone.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.drop-copy {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.drop-copy strong {
+  font-size: 15px;
+  color: var(--label);
+}
+
+.drop-copy span {
+  color: var(--secondary-label);
+  font-size: 12px;
+}
+
+/* 二帯スロット: A=上 / B=下。A/B は本番では同程度に埋まるので面積では見分けられず、
+   識別の手がかりは色と位置しかない → 位置を全画面で固定する。
+   ⇄ は帯の境界の右に重ねるので行は1本も増えない（position の基準がここ） */
+.slots {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.slot {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  min-height: 64px;
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  /* 右は ⇄（32px + right:10px）に潜り込まないよう空ける。ファイル名は
+     .slot-file の ellipsis で切れるので、この余白がないとボタンの下に隠れる。
+     #59 QA: ⇄ は .slots（134px）の中央に translateY(-50%) で置くため、32px の円は
+     slotA の下端・slotB の上端へ 13px×32px 食い込む。重なりはこの右パディング内
+     （内容のない余白）に収まるので表示上の実害はないが、円がスロットの当たり判定を
+     奪う面積を減らすため 52 → 64px に広げ、円の外周から更に 22px 逃がす。
+     ellipsis の切れ位置が 12px 早まるだけで、省略表示自体の挙動は変わらない */
+  padding: 10px 64px 10px 15px;
+  background: var(--content-bg);
+  text-align: left;
+}
+
+/* 左端 3px の色エッジ = 二帯の可視化。.overlap-row.cursor の inset 3px 0 0 と
+   同じ語彙を取込画面にも広げる（話者の色と位置の対応を画面をまたいで崩さない） */
+.slot::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-radius: 10px 0 0 10px;
+  background: var(--tertiary-label);
+}
+
+.slot[data-speaker="A"]::before {
+  background: var(--spk-a);
+}
+
+.slot[data-speaker="B"]::before {
+  background: var(--spk-b);
+}
+
+.slot.filled {
+  border-style: solid;
+  border-width: 1.5px;
+}
+
+.slot[data-speaker="A"].filled {
+  border-color: var(--spk-a);
+  background: var(--spk-a-soft);
+}
+
+.slot[data-speaker="B"].filled {
+  border-color: var(--spk-b);
+  background: var(--spk-b-soft);
+}
+
+.slot-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--label);
+}
+
+.slot-file {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--secondary-label);
+  font-size: 12px;
+}
+
+.slot.filled .slot-file {
+  color: var(--label);
+}
+
+/* ⇄ は2帯の境界（.slots の中央）の右に重ねる。行を1本増やさないための絶対配置。
+   .slots が position: relative なのでそこが基準。絶対配置になったため、旧
+   max-width:900px の justify-self 分岐は効かなくなり削除した。
+   帯の上に重なる位置なので、枠と地がないと記号だけが浮いて「押せるもの」に
+   見えない（#59 実機フィードバック）。.import-close と同じ「円形 + 常時うすい背景」の
+   語彙で押せる見た目に揃える。button.ghost が border-color / background /
+   box-shadow を落とすため、同じ詳細度（button.swap-button）で戻す。
+   32px 幅は据え置き。.slot の右パディングは #59 QA で 64px に広げてある
+   （円が帯の当たり判定を奪う面積を減らすため。理由は .slot 側のコメント） */
+button.swap-button {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  /* 枠は --control-border ではなく --secondary-label。この円は帯の「上」に重なるので、
+     枠が背景から見えないと丸そのものが消えて元の「記号が浮いている」状態に戻る。
+     控えめな枠色は実測でコントラスト 1.3〜2.5:1 しか出ず（未取込の白い帯・話者色の
+     filled 帯のどちらでも）WCAG 1.4.11 の 3:1 を満たさなかった。--secondary-label なら
+     地・未取込帯・A/B の filled 帯すべてに対し最悪 5.13:1（light）/ 4.56:1（dark） */
+  border-color: var(--secondary-label);
+  border-radius: 50%;
+  padding: 0;
+  color: var(--secondary-label);
+  background: var(--content-bg-2);
+  box-shadow: var(--control-shadow);
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* hover は「地を不透明のまま一段はっきりさせる」。--hover-fill（半透明）に差し替えると
+   filled 帯の話者色が透けて、静止時の不透明な地から色が変わって見えるため使わない。
+   枠も --separator-strong まで落とすと静止時より薄くなって逆行するので --label で締める */
+button.swap-button:hover:not(:disabled) {
+  border-color: var(--label);
+  color: var(--label);
+  background: var(--content-bg);
+}
+
+/* L: 取込時のラウドネス正規化トグル */
+
+.import-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.import-options .opt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--label);
+}
+
+.import-options .opt-row.disabled {
+  color: var(--secondary-label);
+}
+
+.import-options input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.import-options input[type="number"] {
+  width: 5.2em;
+  min-height: 26px;
+}
+
+.import-options input:disabled {
+  opacity: 0.5;
+}
+
+.opt-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--secondary-label);
+  font-size: 11px;
+}
+
+/* 保存先（作業フォルダ）: 詳細設定から出して開始ボタンの直前に置いた必須入力（#59）。
+   .import-options のレイアウトをそのまま使いつつ、パスが伸びても「選択する」が
+   折り返しの向こうに飛ばないよう、パス欄だけを伸縮させて残りを行末に固定する */
+.import-workdir {
+  gap: 6px 10px;
+}
+
+.import-workdir .opt-row {
+  font-weight: 600;
+}
+
+.import-workdir .export-path {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 未選択: パスではなく「まだ決まっていない」ことを示す。等幅のままだと
+   偽のパスに見えるので本文書体に戻し、選択待ちの色（secondary）に落とす */
+.import-workdir .export-path.unset {
+  color: var(--secondary-label);
+  font-family: inherit;
+  font-size: 12px;
+  user-select: none;
+}
+
+.import-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* 唯一の primary になったので押しやすさを優先して一段大きく（HIG の 44pt に一致） */
+.import-actions .primary {
+  flex: 1;
+  min-height: 44px;
+  font-size: 14px;
+}
+
+/* 詳細設定の折りたたみ: 既定のまま使う人が大半の設定を1段に畳んで、
+   11〜15px のブロックが等間隔に積まれるのを解消する。JS 不要 */
+.import-advanced {
+  margin-top: 16px;
+  border-top: 1px solid var(--separator);
+  padding-top: 12px;
+}
+
+.import-advanced > summary {
+  cursor: pointer;
+  color: var(--secondary-label);
+  font-size: 12px;
+  list-style: none; /* 既定の三角を消して自前の › に差し替える */
+}
+
+.import-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.import-advanced > summary::before {
+  content: "›";
+  display: inline-block;
+  width: 1em;
+  transition: transform 120ms ease-out;
+}
+
+.import-advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.import-advanced > summary:hover {
+  color: var(--label);
+}
+
+/* details 内の最初の .import-options は summary との間隔を詰める
+   （.import-options の margin-top: 16px は「並んだ設定群の間」用） */
+.import-advanced > .import-options:first-of-type {
+  margin-top: 10px;
+}
+
+/* 再開ボタン: 塗らないが、枠線と幅は主行動と同じに保つ（Issue #51 の対等性）。
+   テキストリンクまで落とすと本当に「二番手」になるので、
+   「塗っていないだけの、同じ大きさのボタン」に留める。
+   button.ghost が border-color / background / box-shadow を落とすため、
+   同じ詳細度（button.restore-link）で枠と地を戻す */
+button.restore-link {
+  flex: 1;
+  min-height: 38px;
+  border-color: var(--control-border);
+  background: var(--control-bg);
+  box-shadow: var(--control-shadow);
+  font-size: 14px;
+}
+
+button.restore-link:hover:not(:disabled) {
+  border-color: var(--separator-strong);
+  background: var(--content-bg-2);
+}
+
+.import-note {
+  margin: 16px 0 0;
+  color: var(--secondary-label);
+  font-size: 11px;
+}
+
+/* アクション別セクション（新規取込 / 既存の再開）。見出しは控えめなサブヘッダ */
+
+.import-section-title {
+  margin: 14px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--secondary-label);
+}
+
+.import-section-resume {
+  margin-top: 18px;
+  border-top: 1px solid var(--separator);
+}
+
+.import-section-resume .import-actions {
+  margin-top: 0;
+}
+
+.import-section-resume .import-note {
+  margin-top: 8px;
+}
+
+/* 取込中: 段階リスト + 大型進捗 */
+
+.stage-list {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 20px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.stage-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  border: 1px solid var(--separator);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--secondary-label);
+  background: var(--content-bg-2);
+}
+
+.stage-list li::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--tertiary-label);
+}
+
+.stage-list li.current {
+  border-color: var(--accent);
+  color: var(--label);
+  font-weight: 600;
+  background: var(--content-bg);
+}
+
+.stage-list li.current::before {
+  background: var(--accent);
+  animation: stage-pulse 1.2s ease-in-out infinite;
+}
+
+.stage-list li.done {
+  color: var(--label);
+}
+
+.stage-list li.done::before {
+  background: var(--ok);
+}
+
+@keyframes stage-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.big-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--segment-track);
+  overflow: hidden;
+}
+
+.big-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 400ms ease-out;
+}
+
+.progress-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.progress-pct {
+  font-size: 22px; /* HIG Title1 相当の数字 */
+  font-weight: 700;
+  color: var(--label);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-msg {
+  color: var(--secondary-label);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ── コンテキストメニュー / トースト ───────────────────── */
+
+.context-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  min-width: 190px;
+  border: 1px solid var(--separator);
+  border-radius: 8px;
+  padding: 5px;
+  background: var(--content-bg);
+  box-shadow: var(--shadow-2);
+}
+
+.context-menu button {
+  justify-content: flex-start;
+  min-height: 26px;
+  border-color: transparent;
+  border-radius: 5px;
+  color: var(--label);
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  font-size: 13px;
+}
+
+/* macOS メニューのハイライト: accent 塗り + 白文字 */
+.context-menu button:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  max-width: 520px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: var(--hud-label);
+  background: var(--hud-bg);
+  box-shadow: var(--shadow-2);
+  font-size: 13px;
+}
+
+/* ── アクセシビリティ / レスポンシブ ───────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* #59: .lower の3列は 290+360+330 + gap32 + padding32 = 1044px を要求する。
+   body の min-width（旧 1040px）を撤去したことで、901〜1043px の帯では
+   「縦積み分岐にはまだ入らないのに3列が入り切らない」状態が生まれる
+   （実測: 920px で下段パネルが 1028px まではみ出し横スクロールが出た）。
+   3列が実際に収まらなくなる幅で1列へ畳み、その帯を塞ぐ。
+   ※ 900px 分岐の .lower 指定と重複するが、あちらは topbar 縦積み等を含む
+      別の関心なので、境界だけを前倒しするこのブロックを独立して置く */
+@media (max-width: 1043px) {
+  .lower {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    height: auto;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .flow-actions,
+  .transport,
+  .block-tools {
+    flex-wrap: wrap;
+  }
+
+  /* #59: body の min-width（旧 1040px）を撤去してこの分岐が初めて到達可能になった。
+     .transport は wrap する一方で height:56px を持つため、折り返した2行目が
+     切れる。折り返しを許すなら高さも伸ばせる必要がある（padding は据え置き）*/
+  .transport {
+    height: auto;
+    min-height: 56px;
+    row-gap: 8px;
+  }
+
+  /* 折り返し時、時刻の左右罫線が行末で宙に浮くのを避ける。
+     縦積みでは区画の仕切りとしての意味を失うので外す */
+  .time-readout {
+    border-left: none;
+    padding-left: 0;
+  }
+
+  /* Seam Strip は狭い幅では場所を譲る（PR3 の予約席と同じ判断を canvas でも維持）。
+     120px に 90分を圧縮すると 1px ≒ 45秒で「指紋」としての意味が出ないため、
+     縮めて残すより畳んで transport の他の操作に幅を渡す方が正しい。
+     display:none で clientWidth が 0 になり、drawSeamStrip が冒頭で早期 return する
+     （stripW は Math.max(1,…) で 1 になるため、判定は実 DOM 幅で行っている） */
+  .seam-strip {
+    display: none;
+  }
+
+  .lower {
+    grid-template-columns: 1fr;
+  }
+
+  /* .slots は既定で1列（二帯）になり、.swap-button も絶対配置になったため、
+     ここにあった grid-template-columns / justify-self の分岐は死にコードとして削除 */
+}
+
+/* Before/After の役割キャプション（実機フィードバック: 何を比較するのか不明だった） */
+.ab-caption {
+  color: var(--secondary-label);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ── 確認ダイアログ（topbar「閉じる」。<dialog> showModal） ── */
+
+.confirm-dialog {
+  border: none;
+  border-radius: var(--radius-l, 12px);
+  padding: 0;
+  background: var(--content-bg);
+  color: var(--label);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 28%);
+  max-width: min(440px, 90vw);
+}
+
+.confirm-dialog::backdrop {
+  background: rgb(0 0 0 / 32%);
+}
+
+.confirm-dialog form {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.confirm-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.confirm-dialog .dialog-note {
+  margin: 0;
+  color: var(--secondary-label);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.confirm-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Issue #54: 第3の選択肢「編集を破棄して閉じる」。いいえ/はい より一段控えめな
+   リンク風（.ghost.tiny）+ 補足の小文字。破壊操作なので hover でだけ赤を出す */
+.confirm-dialog .dialog-discard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  margin-top: -4px;
+}
+
+button.ghost.tiny {
+  min-height: 20px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--secondary-label);
+}
+
+button.ghost.tiny:hover:not(:disabled) {
+  color: var(--alert);
+  background: transparent;
+  text-decoration: underline;
+}
+
+.confirm-dialog .dialog-discard-note {
+  font-size: 11px;
+  color: var(--tertiary-label);
+  padding-right: 4px;
+}
+

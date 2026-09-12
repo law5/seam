@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>podcast-prep</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="identity">
+        <span class="app-mark">pp</span>
+        <input id="projectName" class="project-name" value="Podcast prep project" aria-label="プロジェクト名" />
+      </div>
+
+      <div id="jobProgress" class="job-chip" hidden>
+        <progress max="1" value="0"></progress>
+        <span class="job-progress-label"></span>
+      </div>
+
+      <nav class="flow-actions" aria-label="主要操作">
+        <button id="transcribe" type="button" class="ghost">文字起こし</button>
+        <button id="exportProject" type="button" class="primary">エクスポート</button>
+        <!-- #59: 保存は「押せるが押す必要がない」もの（⌘S と自動保存がある）。
+             要素は <button> のまま（main.js click / disabled・panels.js textContent が
+             前提にしている）で、見た目だけ状態表示に寄せる → .save-chip -->
+        <button id="saveProject" type="button" class="ghost save-chip">保存</button>
+        <button id="closeProject" type="button" class="ghost icon-button" aria-label="プロジェクトを閉じる" title="プロジェクトを閉じる">✕</button>
+      </nav>
+
+      <!-- ファイル入力は常に隠す（オンボーディングのスロットから JS でトリガー） -->
+      <input id="importA" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.aiff,.aif" hidden />
+      <input id="importB" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.aiff,.aif" hidden />
+      <!-- 「閉じる」の確認。ブラウザネイティブの confirm()/alert() は使わない
+           （表示が環境依存でボタン文言も揃えられない）ため <dialog> で実装 -->
+      <dialog id="closeProjectDialog" class="confirm-dialog">
+        <form id="closeProjectForm" method="dialog">
+          <h2>プロジェクトを閉じる</h2>
+          <p class="dialog-note">project.json を保存して別のプロジェクトを編集しますか？</p>
+          <div class="dialog-actions">
+            <button value="no" type="submit" class="ghost">いいえ</button>
+            <button value="yes" type="submit" class="primary">はい</button>
+          </div>
+          <!-- Issue #54: 第3の選択肢（控えめなリンク風）。自動保存済みの編集を
+               開いた時点のスナップショットへ巻き戻してから閉じる（真の破棄）。
+               取込/文字起こし/エクスポート進行中は main が disabled にする -->
+          <div class="dialog-discard">
+            <button id="discardClose" value="discard" type="submit" class="ghost tiny">編集を破棄して閉じる</button>
+            <span class="dialog-discard-note">開いた時点の状態に戻します</span>
+          </div>
+        </form>
+      </dialog>
+      <!-- Issue #32: エクスポートの上書き確認（closeProjectDialog と同じ <dialog> 実装。
+           出力先に前回の成果物が実在するときだけ main.onExport が showModal する） -->
+      <dialog id="exportOverwriteDialog" class="confirm-dialog">
+        <form id="exportOverwriteForm" method="dialog">
+          <h2>上書きの確認</h2>
+          <p class="dialog-note">エクスポート先にファイルがあります。上書きしますか？<br />
+            別のファイルとして保存したい場合は、書き出し設定の出力先で新規のフォルダを設定してください</p>
+          <div class="dialog-actions">
+            <button value="no" type="submit" class="ghost">いいえ</button>
+            <button value="yes" type="submit" class="primary">はい</button>
+          </div>
+        </form>
+      </dialog>
+      <!-- Issue #53: 作業フォルダ衝突の確認（closeProjectDialog と同じ <dialog> 実装。
+           取込開始時に workdir_precheck が existing_project を返したときだけ
+           main.startImportFlow が showModal する。孤児レジストリエントリは
+           サーバ側で透過処理されるためここには来ない） -->
+      <dialog id="workdirConflictDialog" class="confirm-dialog">
+        <form id="workdirConflictForm" method="dialog">
+          <h2>既存のプロジェクトがあります</h2>
+          <p class="dialog-note">このフォルダには既存のプロジェクトがあります。再開しますか？</p>
+          <div class="dialog-actions">
+            <button value="cancel" type="submit" class="ghost">キャンセル</button>
+            <button value="overwrite" type="submit" class="ghost danger">上書きして取り込む</button>
+            <button value="resume" type="submit" class="primary">再開する</button>
+          </div>
+          <p class="dialog-note">「上書きして取り込む」を選ぶと、このフォルダの既存のプロジェクトは削除され、<strong>元に戻せません</strong></p>
+        </form>
+      </dialog>
+    </header>
+
+    <main class="workspace">
+      <section class="transport">
+        <div class="transport-play">
+          <button id="playPause" type="button" class="play-button" aria-label="再生 / 一時停止">▶</button>
+          <button id="back5" type="button" class="ghost skip-button" aria-label="5秒戻る">−5s</button>
+          <button id="forward5" type="button" class="ghost skip-button" aria-label="5秒進む">+5s</button>
+        </div>
+        <span id="timeReadout" class="time-readout">00:00:00 / 00:00:00</span>
+        <!-- #59 PR4 Seam Strip: エピソード全体を圧縮した 20px の帯。
+             上=A / 下=B の発話密度、中央の溝に立つ縦線=被り、枠=現在の表示範囲。
+             クリックでその位置へシーク（ドラッグは無し。スクラブはルーラーの役割）。
+             aria-hidden: canvas の中身は読み上げられず、同じ情報は #overlapCount
+             バッジと被り一覧パネルが既に持っているため、重複した情報源を
+             アクセシビリティツリーに増やさない（キーボードのシークは ←/→・±5s が担う）-->
+        <canvas id="seamStrip" class="seam-strip" height="20" aria-hidden="true"
+                title="エピソード全体の俯瞰（上=A / 下=B の発話量、中央の縦線=被り、枠=表示中の範囲）。クリックでその位置へ移動します"></canvas>
+        <label class="compact" title="タイムラインの拡大率（Ctrl/⌘ + ホイールでも操作できます）">
+          ズーム
+          <input id="zoom" type="range" min="20" max="260" value="80" aria-label="タイムラインのズーム" />
+        </label>
+        <button id="fitZoom" type="button" class="ghost" aria-pressed="false" title="エピソード全体を1画面に表示（もう一度押すと元のズームに戻ります）">全体</button>
+        <!-- 目標LUFS はトラック設定パネルの「ラウドネス」欄へ集約（Issue #37 追加FB） -->
+      </section>
+
+      <section class="timeline" id="timeline">
+        <div class="track-gutter">
+          <div class="gutter-ruler"></div>
+          <div class="track-label" data-speaker="A"><span class="speaker-tag">A</span>
+            <button class="ms" data-mute="A" type="button" title="Mute A">M</button><button class="ms" data-solo="A" type="button" title="Solo A">S</button></div>
+          <div class="track-label" data-speaker="B"><span class="speaker-tag">B</span>
+            <button class="ms" data-mute="B" type="button" title="Mute B">M</button><button class="ms" data-solo="B" type="button" title="Solo B">S</button></div>
+        </div>
+        <div id="tlScroll" class="timeline-scroll">
+          <div id="tlContent">
+            <canvas id="rulerCanvas"></canvas>
+            <canvas id="trackCanvasA"></canvas>
+            <canvas id="trackCanvasB"></canvas>
+            <div id="playhead"></div>
+            <div id="dragReadout" hidden></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="lower">
+        <aside class="panel overlaps-panel">
+          <div class="panel-head">
+            <h2>自動調整</h2>
+          </div>
+          <div class="auto-tighten">
+            <label class="at-row"><input type="checkbox" id="atOverlaps" checked /> 被りを解消（<input id="atMaxOv" type="number" step="0.1" min="0.3" /> s まで）</label>
+            <p class="at-error" id="atMaxOvError" hidden></p>
+            <label class="at-row"><input type="checkbox" id="atGaps" checked /> 無音を詰める（<input id="atMaxGap" type="number" step="0.1" min="0" /> s 超 → <input id="atKeepGap" type="number" step="0.1" min="0" /> s）</label>
+            <p class="at-error" id="atGapError" hidden></p>
+            <div class="at-actions">
+              <button id="atPreview" type="button" class="ghost">プレビュー</button>
+              <button id="atApply" type="button" class="primary" disabled>適用</button>
+            </div>
+            <div id="atSummary" class="at-summary"></div>
+          </div>
+          <div class="panel-head sub">
+            <h2>被り一覧</h2>
+            <span id="overlapCount" class="badge">0</span>
+          </div>
+          <div class="ov-toolbar">
+            <div id="ovSummary" class="ov-summary">解消可 0件 / 保護 0件 — 選択中 0件</div>
+            <div class="ov-toolbar-row">
+              <div class="ov-bulk">
+                <button id="ovCheckAll" type="button" class="ghost tiny" disabled>全選択</button>
+                <button id="ovUncheckAll" type="button" class="ghost tiny" disabled>全解除</button>
+              </div>
+              <div class="ov-nav">
+                <button id="ovPrev" type="button" class="ghost tiny" aria-label="前の被りへ" disabled>‹ Prev</button>
+                <span id="ovPosition" class="ov-position">– / 0</span>
+                <button id="ovNext" type="button" class="ghost tiny" aria-label="次の被りへ" disabled>Next ›</button>
+              </div>
+            </div>
+          </div>
+          <p class="panel-hint">チェックした被りだけを自動調整の対象にします（一覧フォーカス中: ←→ 移動 / ↓ チェック切替 / ↑ その位置から再生。A/D/S/W でも可）</p>
+          <div id="overlaps" class="list empty" tabindex="0">プロジェクトを取り込んでください</div>
+        </aside>
+
+        <section class="panel editor-panel">
+          <div class="panel-head">
+            <h2>文字起こし・ブロック編集</h2>
+            <div class="inline-actions">
+              <button id="undo" type="button" class="ghost icon-button" title="元に戻す (⌘Z)">↶</button>
+              <button id="redo" type="button" class="ghost icon-button" title="やり直す (⇧⌘Z)">↷</button>
+            </div>
+          </div>
+          <div class="block-tools">
+            <input id="search" type="search" placeholder="テキスト検索" aria-label="文字起こしを検索" />
+            <button id="splitBlock" type="button" class="ghost" title="再生ヘッド位置で分割 (S)">分割</button>
+            <button id="deleteBlock" type="button" class="ghost danger" title="選択ブロックを削除 (Delete)">削除</button>
+            <button id="insertGap" type="button" class="ghost">ギャップ挿入</button>
+            <button id="deleteGap" type="button" class="ghost">ギャップ削除</button>
+          </div>
+          <div id="selectedBlock" class="selected">未選択</div>
+          <div id="transcriptList" class="list"></div>
+        </section>
+
+        <aside class="panel settings-panel">
+          <div class="panel-head">
+            <h2>トラック設定</h2>
+          </div>
+          <div class="track-settings" data-speaker="A">
+            <div class="settings-title"><span class="speaker-tag">A</span>Speaker A</div>
+            <label>ゲイン <input data-field="gain_db" data-speaker="A" type="range" min="-12" max="12" step="0.5" value="0" /><output data-out="gain_db" data-speaker="A">0.0 dB</output></label>
+            <label>歯擦音抑制 <input data-field="deesser" data-speaker="A" type="range" min="0" max="1" step="0.05" value="0" /><output data-out="deesser" data-speaker="A">0%</output></label>
+            <div class="ab-buttons" title="歯擦音抑制の聴き比べ。再生ヘッド位置から8秒を、Before=抑制なし / After=現在の設定で再生します（ゲインは両方同じ）">
+              <span class="ab-caption">聴き比べ</span>
+              <div class="ab-seg">
+                <button data-preview="before" data-speaker="A" type="button" class="ghost">Before</button>
+                <button data-preview="after" data-speaker="A" type="button" class="ghost">After</button>
+              </div>
+            </div>
+            <label>頭出し (ms) <input data-field="offset_seconds" data-speaker="A" type="number" step="10" value="0" /></label>
+            <div class="norm-row">
+              <span class="norm-label">正規化</span>
+              <span class="norm-status" data-norm-status="A">未取込</span>
+              <button data-normalize="A" type="button" class="ghost tiny" disabled>このトラックを正規化</button>
+            </div>
+          </div>
+          <div class="track-settings" data-speaker="B">
+            <div class="settings-title"><span class="speaker-tag">B</span>Speaker B</div>
+            <label>ゲイン <input data-field="gain_db" data-speaker="B" type="range" min="-12" max="12" step="0.5" value="0" /><output data-out="gain_db" data-speaker="B">0.0 dB</output></label>
+            <label>歯擦音抑制 <input data-field="deesser" data-speaker="B" type="range" min="0" max="1" step="0.05" value="0" /><output data-out="deesser" data-speaker="B">0%</output></label>
+            <div class="ab-buttons" title="歯擦音抑制の聴き比べ。再生ヘッド位置から8秒を、Before=抑制なし / After=現在の設定で再生します（ゲインは両方同じ）">
+              <span class="ab-caption">聴き比べ</span>
+              <div class="ab-seg">
+                <button data-preview="before" data-speaker="B" type="button" class="ghost">Before</button>
+                <button data-preview="after" data-speaker="B" type="button" class="ghost">After</button>
+              </div>
+            </div>
+            <label>頭出し (ms) <input data-field="offset_seconds" data-speaker="B" type="number" step="10" value="0" /></label>
+            <div class="norm-row">
+              <span class="norm-label">正規化</span>
+              <span class="norm-status" data-norm-status="B">未取込</span>
+              <button data-normalize="B" type="button" class="ghost tiny" disabled>このトラックを正規化</button>
+            </div>
+          </div>
+          <!-- Issue #37: ラウドネス設定は両トラック共通なので1ブロックに集約
+               （目標LUFS / 最大TP / 許容量。書き出しと「このトラックを正規化」が使う）。
+               リセットは utils.LOUDNORM_DEFAULTS（= models.py default_settings と対応）へ戻す -->
+          <div class="panel-head sub">
+            <h2>ラウドネス</h2>
+            <button id="loudnormReset" type="button" class="ghost tiny"
+              title="ラウドネス設定を既定値（目標 -16 LUFS / 最大TP -1.5 dBTP / 許容量 0.5 LU）に戻します">リセット</button>
+          </div>
+          <div class="loudnorm-settings">
+            <label title="書き出し・後がけ正規化の目標ラウドネス（LUFS）。両トラック共通">目標LUFS
+              <input id="targetLufs" type="number" min="-24" max="-10" step="0.5" value="-16" />
+            </label>
+            <label title="loudnorm の最大トゥルーピーク。MP3納品時は -2 に下げるとインターサンプルピークによる割れを回避できます">最大TP (dBTP)
+              <input id="truePeak" type="number" min="-9" max="0" step="0.1" value="-1.5" />
+            </label>
+            <label title="計測ラウドネスが 目標±この値 以内なら正規化をスキップします（0 = 常に正規化）">許容量 (LU)
+              <input id="normTolerance" type="number" min="0" step="0.1" value="0.5" />
+            </label>
+          </div>
+          <div class="panel-head sub">
+            <h2>文字起こし設定</h2>
+          </div>
+          <div class="transcribe-settings">
+            <label>モデル
+              <select id="whisperModelSelect" aria-label="Whisperモデル"></select>
+            </label>
+            <p id="whisperModelNote" class="setting-note" hidden></p>
+            <div id="whisperDownloadRow" class="dl-row" hidden>
+              <button id="whisperDownload" type="button">モデルをダウンロード</button>
+              <span id="whisperDownloadStatus" class="dl-status"></span>
+            </div>
+            <label id="whisperCustomRow" hidden>パス
+              <input id="whisperCustomPath" type="text" placeholder="/path/to/faster-whisper-model" spellcheck="false" />
+            </label>
+            <label>計算精度
+              <select id="whisperComputeType" aria-label="計算精度"></select>
+            </label>
+            <p id="whisperComputeNote" class="setting-note" hidden></p>
+            <label>デバイス
+              <select id="whisperDevice" aria-label="計算デバイス"></select>
+            </label>
+          </div>
+          <div class="panel-head sub">
+            <h2>書き出し設定</h2>
+          </div>
+          <div class="export-settings">
+            <label>形式
+              <select id="exportFormat">
+                <option value="wav">WAV 48k/16bit mono</option>
+                <option value="mp3">MP3 320k</option>
+                <option value="mp3_192">MP3 192k</option>
+              </select>
+            </label>
+            <!-- Issue #18: PODCAST_PREP_EXPORT_DIR が設定されているときだけ
+                 ベース選択のプルダウンを出す（未設定なら hidden のまま。
+                 環境変数名は UI に出さない — Issue #32） -->
+            <label id="exportBaseRow" hidden>書き出し先
+              <select id="exportBase"></select>
+            </label>
+            <!-- Issue #32: 出力先はネイティブのフォルダ選択で指定する（手書き入力は廃止）。
+                 選んだフォルダはサーバ側の許可ベース（_chosen_dirs）に積まれる。
+                 パスの描画は main.js renderExportDirRow が textContent で行う（XSS規律） -->
+            <div class="export-dir-row">
+              <span class="export-dir-label">出力先</span>
+              <button id="exportDirChoose" type="button" class="ghost tiny">選択する</button>
+              <button id="exportDirReset" type="button" class="ghost tiny" hidden>リセット</button>
+              <code id="exportDirPath" class="export-path">既定（プロジェクト内）</code>
+            </div>
+            <p id="exportDirHint" class="hint">
+              出力先を設定すると任意のフォルダに書き出せます
+            </p>
+          </div>
+          <!-- G: エクスポート完了時の出力先表示（トーストが消えても残す） -->
+          <div id="exportResult" class="export-result" hidden>
+            <div class="export-result-head">書き出し先</div>
+            <code id="exportPath" class="export-path"></code>
+            <button id="revealExport" type="button" class="ghost tiny">Finderで開く</button>
+          </div>
+          <!-- 作業フォルダの常時表示（レジストリ未登録でも従来配置の実パスが payload.workdir に載る） -->
+          <div id="workdirInfo" class="export-result" hidden>
+            <div class="export-result-head">作業フォルダ</div>
+            <code id="workdirPath" class="export-path"></code>
+            <button id="revealWorkdir" type="button" class="ghost tiny">Finderで開く</button>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <!-- 取込オンボーディング / 進捗オーバーレイ（プロジェクト未取込時と取込中に表示） -->
+    <div id="importOverlay" class="import-overlay" hidden>
+      <div class="import-card" role="dialog" aria-modal="true" aria-labelledby="importTitle">
+        <div class="import-card-head">
+          <h1 id="importTitle">エピソードを取り込む</h1>
+          <button id="importClose" type="button" class="icon-button import-close" aria-label="閉じる" hidden>×</button>
+        </div>
+        <p class="import-subtitle">2本の音声を、1本の会話にします</p>
+        <!-- flow-guide は「説明」ではなく「現在地を持つ進捗」。取込オーバーレイは
+             常に1段目なので class / aria-current は静的に置く（JS 不要）。
+             色と太さだけでは支援技術に伝わらないため aria-current="step" が必須。 -->
+        <ol class="flow-guide" aria-label="作業の流れ">
+          <li class="current" aria-current="step"><b>1</b>音声を2本取込</li>
+          <li><b>2</b>被り・無音を調整</li>
+          <li><b>3</b>会話を確認</li>
+          <li><b>4</b>WAV / SRT 書き出し</li>
+        </ol>
+        <div id="importSetup">
+          <!-- アクション単位の2セクション構成: 「新規取込」と「既存の再開」を混ぜない -->
+          <section class="import-section" aria-labelledby="importSectionNew">
+            <h2 id="importSectionNew" class="import-section-title">新しいエピソードを取り込む</h2>
+            <div id="dropZone" class="drop-zone">
+              <p class="drop-copy"><strong>音声ファイルを2本ここにドロップ</strong><span>MP3 / WAV など。上が Speaker A、下が Speaker B です</span></p>
+              <!-- 二帯（A=上 / B=下）: A/B は本番では同程度に埋まるので面積では
+                   見分けられない。識別の手がかりは色と位置しかないため、上下の
+                   並びと左端の色エッジを全画面で固定する。
+                   ⇄ は DOM 順で B の後（Tab 順は A → B → ⇄ が操作順に沿う）。
+                   CSS で帯の境界に絶対配置するので行は増えない。 -->
+              <div class="slots">
+                <button id="slotA" type="button" class="slot" data-speaker="A">
+                  <span class="slot-name"><span class="speaker-tag">A</span>Speaker A</span>
+                  <span id="slotFileA" class="slot-file">クリックしてファイルを選ぶ</span>
+                </button>
+                <button id="slotB" type="button" class="slot" data-speaker="B">
+                  <span class="slot-name"><span class="speaker-tag">B</span>Speaker B</span>
+                  <span id="slotFileB" class="slot-file">クリックしてファイルを選ぶ</span>
+                </button>
+                <button id="swapSlots" type="button" class="ghost swap-button" title="A と B を入れ替える" aria-label="A と B を入れ替える">⇄</button>
+              </div>
+            </div>
+            <!-- 作業フォルダは「必須の入力」なので詳細設定の外に出し、開始ボタンの直前に置く（#59 実機フィードバック）。
+                 fork / clone した人の取込先はそれぞれ違うので、既定パスを見せて
+                 「このままでいい」と思わせるのをやめ、未選択を明示して選ばせる。
+                 未選択のうちは #importStart が disabled（main.js canStartImport）。
+                 パスの描画は main.js renderWorkdirRow が textContent で行う（XSS規律） -->
+            <div class="import-options import-workdir">
+              <span class="opt-row">保存先（作業フォルダ）</span>
+              <code id="importWorkdirPath" class="export-path">未選択 — 保存先を選んでください</code>
+              <button id="importWorkdirChoose" type="button" class="ghost tiny">選択する</button>
+              <button id="importWorkdirReset" type="button" class="ghost tiny" hidden>選び直す</button>
+              <!-- 押せない理由をボタンの手前に置く（disabled だけでは理由が伝わらない）。
+                   選択済みになったら main.js が hidden にする -->
+              <p id="importWorkdirHint" class="opt-note">保存先を選ぶと取り込めます。取り込んだ音源と編集内容はこのフォルダに保存されます。</p>
+            </div>
+            <div class="import-actions">
+              <button id="importStart" type="button" class="primary" disabled>取り込みを開始</button>
+            </div>
+            <p class="import-note">取込では 正規化 → 無音検出 → 波形生成 を行います。60分の素材でおよそ5〜6分かかります。</p>
+            <!-- 情報密度の階層づけ: 既定のまま使う人が大半の設定（ラウドネス正規化）を
+                 1つの <details> に畳み、視線の入口を h1 → 帯 → 保存先 → 開始ボタン に絞る。
+                 summary はネイティブでフォーカス可能・aria-expanded 相当も自動なので
+                 手動 ARIA は足さない。作業フォルダ行だけを外に出し、他の要素・ID は変更なし。 -->
+            <details class="import-advanced">
+              <summary>詳細設定（ラウドネス正規化）</summary>
+              <!-- L: ラウドネス正規化を選択制に（既定OFF。取込を速く始められる方を既定にする） -->
+              <div class="import-options">
+                <label class="opt-row">
+                  <input id="importNormalize" type="checkbox" />
+                  ラウドネス正規化する
+                </label>
+                <label id="importLufsLabel" class="opt-row compact">
+                  目標LUFS
+                  <input id="importLufs" type="number" min="-24" max="-10" step="0.5" value="-16" />
+                </label>
+                <!-- Issue #37: ラウドネス詳細（正規化チェックOFF時は LUFS と同様に disabled） -->
+                <label id="importTruePeakLabel" class="opt-row compact" title="loudnorm の最大トゥルーピーク。MP3納品時は -2 に下げるとインターサンプルピークによる割れを回避できます">
+                  最大トゥルーピーク（dBTP）
+                  <input id="importTruePeak" type="number" min="-9" max="0" step="0.1" value="-1.5" />
+                </label>
+                <label id="importToleranceLabel" class="opt-row compact" title="計測ラウドネスが 目標±この値 以内なら正規化をスキップします（0 = 常に正規化）">
+                  許容量（LU）
+                  <input id="importTolerance" type="number" min="0" step="0.1" value="0.5" />
+                </label>
+                <p id="importNormalizeNote" class="opt-note" hidden>音量を調整し取り込むため、チェックすると時間がかかります。後からトラック設定でかけられます。</p>
+              </div>
+            </details>
+          </section>
+          <section class="import-section import-section-resume" aria-labelledby="importSectionResume">
+            <h2 id="importSectionResume" class="import-section-title">以前の作業を続ける</h2>
+            <div class="import-actions">
+              <!-- Issue #51「対等の入口」: 画面で最も明るいものが disabled ボタンになる
+                   のを避けるため、塗りの重みは「取り込みを開始」1つに整理した（#59）。
+                   譲るのは塗り1点だけで、入口としての対等性は
+                   ①見出し付きの独立セクション ②説明文（.import-note）
+                   ③常に同じ位置 ④取込が disabled のときも必ず押せる の4点で担保する。
+                   さらに .restore-link は枠線と幅（flex:1）を主行動と同じに保ち、
+                   「塗っていないだけの、同じ大きさのボタン」に留める。 -->
+              <button id="restoreFromJson" type="button" class="ghost restore-link">project.json から復元</button>
+            </div>
+            <p class="import-note">以前の作業フォルダにある project.json を選ぶと、そのフォルダのまま開きます。</p>
+          </section>
+        </div>
+        <div id="importProgress" hidden>
+          <ol class="stage-list">
+            <li data-stage="loudness">ラウドネス正規化</li>
+            <li data-stage="vad">無音検出（VAD）</li>
+            <li data-stage="peaks">波形生成</li>
+          </ol>
+          <div class="big-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="取込の進捗"><div id="importBar" class="big-progress-fill"></div></div>
+          <div class="progress-meta"><span id="importPct" class="progress-pct">0%</span><span id="importMsg" class="progress-msg">準備中…</span></div>
+          <p class="import-note">このまま待っていて大丈夫です。完了すると波形が表示されます。</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="contextMenu" class="context-menu" hidden></div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script type="module" src="/static/js/main.js"></script>
+  </body>
+</html>

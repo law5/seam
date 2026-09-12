@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      # Node 22 (LTS): ES modules の .js に対する node --check は
+      # モジュール構文検出が既定有効な 22.7+ が必要（Node 20 では CJS 扱いになり失敗する）
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Python tests
+        run: uv run pytest -q
+
+      - name: Python syntax check
+        run: uv run python -m compileall -q src tests scripts tools
+
+      - name: JS syntax check
+        run: |
+          for f in src/podcast_prep/static/js/*.js; do
+            node --check "$f"
+          done
+
+      # ディレクトリ引数 (node --test tests/js/) は新しめの Node で
+      # MODULE_NOT_FOUND になるため、シェルグロブで明示的にファイルを渡す
+      - name: JS tests
+        run: node --test tests/js/*.test.mjs

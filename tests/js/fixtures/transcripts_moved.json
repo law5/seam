@@ -1,0 +1,110 @@
+{
+ "blocks": [
+  {
+   "deleted": false,
+   "duration": 2.0,
+   "end": 7.0,
+   "id": "a-001",
+   "source_end": 2.0,
+   "source_start": 0.0,
+   "speaker": "A",
+   "start": 5.0,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 1.5,
+   "end": 2.0,
+   "id": "a-002",
+   "source_end": 4.5,
+   "source_start": 3.0,
+   "speaker": "A",
+   "start": 0.5,
+   "text": ""
+  },
+  {
+   "deleted": false,
+   "duration": 1.5,
+   "end": 1.75,
+   "id": "b-001",
+   "source_end": 2.5,
+   "source_start": 1.0,
+   "speaker": "B",
+   "start": 0.25,
+   "text": ""
+  }
+ ],
+ "description": "\u79fb\u52d5\u5f8c\u5c04\u5f71: \u30d6\u30ed\u30c3\u30af\u9806\u9006\u8ee2\u30fb\u90e8\u5206\u30af\u30ea\u30c3\u30d7\u30fb\u30d6\u30ed\u30c3\u30af\u5916\u30bb\u30b0\u30e1\u30f3\u30c8\u9664\u5916",
+ "expected_segments": [
+  {
+   "blockId": "b-001",
+   "end": 1.75,
+   "id": "b-tr-1",
+   "speaker": "B",
+   "start": 0.25,
+   "text": "b partial"
+  },
+  {
+   "blockId": "a-002",
+   "end": 0.9,
+   "id": "a-tr-2",
+   "speaker": "A",
+   "start": 0.5,
+   "text": ""
+  },
+  {
+   "blockId": "a-001",
+   "end": 6.2,
+   "id": "a-tr-1",
+   "speaker": "A",
+   "start": 5.5,
+   "text": "hello"
+  },
+  {
+   "blockId": "a-001",
+   "end": 7.0,
+   "id": "a-tr-2",
+   "speaker": "A",
+   "start": 6.8,
+   "text": "crosses blocks"
+  }
+ ],
+ "transcripts": [
+  {
+   "block_id": null,
+   "id": "a-tr-1",
+   "source_end": 1.2,
+   "source_start": 0.5,
+   "speaker": "A",
+   "text": "hello",
+   "words": []
+  },
+  {
+   "block_id": null,
+   "id": "a-tr-2",
+   "source_end": 3.4,
+   "source_start": 1.8,
+   "speaker": "A",
+   "text": "crosses blocks",
+   "words": []
+  },
+  {
+   "block_id": null,
+   "id": "a-tr-3",
+   "source_end": 2.9,
+   "source_start": 2.2,
+   "speaker": "A",
+   "text": "in no block",
+   "words": []
+  },
+  {
+   "block_id": null,
+   "id": "b-tr-1",
+   "source_end": 2.6,
+   "source_start": 0.9,
+   "speaker": "B",
+   "text": "b partial",
+   "words": []
+  }
+ ]
+}

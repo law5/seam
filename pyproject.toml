@@ -1,0 +1,55 @@
+[project]
+name = "podcast-prep"
+version = "0.1.0"
+description = "Local-only prep tool for two-speaker podcast recordings: loudness, overlap detection, clip editing, transcription, export."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    { name = "law5" },
+]
+keywords = [
+    "podcast",
+    "audio",
+    "loudness",
+    "vad",
+    "overlap-detection",
+    "transcription",
+    "whisper",
+    "ffmpeg",
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "faster-whisper>=1.1.0",
+    "numpy>=1.26",
+    "python-multipart>=0.0.12",
+    "uvicorn[standard]>=0.32.0",
+    "webrtcvad-wheels>=2.0.14",
+]
+
+[project.urls]
+Repository = "https://github.com/law5/podcast-prep"
+Issues = "https://github.com/law5/podcast-prep/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+podcast-prep = "podcast_prep.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
