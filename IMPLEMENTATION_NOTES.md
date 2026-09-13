@@ -1,6 +1,6 @@
 # Implementation Notes
 
-## 実装サマリー（v3ラウンド時点）
+## 実装サマリー
 
 - `uv` 管理の Python 3.12+ / FastAPI アプリ。既定は `127.0.0.1:4520`（`PODCAST_PREP_HOST` / `PODCAST_PREP_PORT` / `PODCAST_PREP_DATA_DIR` で変更可能）。
 - 取込: ffmpeg `loudnorm` 2-pass 正規化（`-progress pipe:1` の実測進捗つき。linear 適用が dynamic へフォールバックした場合は `normalization_fallback` を記録）→ VAD（webrtcvad + エネルギー判定フォールバック）→ 波形ピーク生成。
