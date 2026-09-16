@@ -1,6 +1,6 @@
 """POST /api/projects/{id}/auto_edit の API テスト。
 
-FastAPI TestClient + PODCAST_PREP_DATA_DIR monkeypatch（test_security.py の方式）。
+FastAPI TestClient + SEAM_DATA_DIR monkeypatch（test_security.py の方式）。
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def _standard_blocks():
 
 
 def _make_project(tmp_path, monkeypatch, blocks, pid="proj-auto"):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     project = ProjectState.new(pid, "auto-edit test")
     project.status = "ready"
     project.blocks = blocks
@@ -161,7 +161,7 @@ def test_apply_is_idempotent(tmp_path, monkeypatch, client):
 
 
 def test_unknown_project_returns_404(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     res = client.post("/api/projects/no-such-project/auto_edit", json={})
     assert res.status_code == 404
 

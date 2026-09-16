@@ -672,7 +672,7 @@ def render_edited_track(
             progress(1.0)
         return
 
-    with tempfile.TemporaryDirectory(prefix="podcast-prep-render-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="seam-render-") as tmpdir:
         filtered = Path(tmpdir) / f"{speaker}_filtered.wav"
         apply_track_filters(source_wav, filtered, gain_db=gain_db, deesser=deesser)
         info = wave_info(filtered)

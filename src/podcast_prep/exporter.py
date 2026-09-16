@@ -51,7 +51,11 @@ EXPORT_ARTIFACT_NAMES: tuple[str, ...] = tuple(
 # README.txt の自動生成マーカー（1行目に置く）。書き出し先にはユーザーが選んだ任意の
 # フォルダを指定できるようになったため、そこに元からある README.txt を無警告で
 # 潰す可能性がある（QA指摘）。この行が無いファイルは他人のものとして退避する。
-README_MARKER = "# podcast-prep がこのファイルを自動生成しました"
+README_MARKER = "# seam がこのファイルを自動生成しました"
+# 旧名 podcast-prep 時代に書き出した README も「自分のもの」として認識する。
+# これが無いと、過去の書き出しフォルダへ再書き出ししたときに自作 README を
+# 他人のものと誤認して退避し続ける（README が積み上がる）。
+_LEGACY_README_MARKERS = ("# podcast-prep がこのファイルを自動生成しました",)
 
 
 def _points_at_same_file(material: Path, target: Path) -> bool:
@@ -107,7 +111,7 @@ def _export_source_audio(
 
 
 def _is_own_readme(path: Path) -> bool:
-    """`path` が podcast-prep 自身が書いた README か（= 上書きしてよいか）。
+    """`path` が seam 自身が書いた README か（= 上書きしてよいか。旧名時代のものも含む）。
 
     先頭の BOM も剥がす。自動生成した README をエディタが BOM 付きで保存し直すと、
     次回から自分のファイルを他人と誤認して退避が積み上がる（QA指摘）。
@@ -116,7 +120,8 @@ def _is_own_readme(path: Path) -> bool:
         head = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return head.lstrip("﻿").lstrip().startswith(README_MARKER)
+    head = head.lstrip("﻿").lstrip()
+    return head.startswith(README_MARKER) or head.startswith(_LEGACY_README_MARKERS)
 
 
 def _is_own_project_json(path: Path) -> bool:
@@ -206,12 +211,12 @@ def _readme_destination(output_dir: Path) -> Path:
     if not primary.exists() or _is_own_readme(primary):
         return primary
     for suffix in ("", *(f"-{n}" for n in range(2, 100))):
-        candidate = output_dir / f"README_podcast-prep{suffix}.txt"
+        candidate = output_dir / f"README_seam{suffix}.txt"
         if not candidate.exists() or _is_own_readme(candidate):
             return candidate
     # 100個埋まっているのは異常。README のために書き出し全体を落とす筋合いはないので
     # 最後の候補を使う（この状況では何を選んでも誰かの README を潰す）。
-    return output_dir / "README_podcast-prep-99.txt"
+    return output_dir / "README_seam-99.txt"
 
 
 def _readme_text(project: ProjectState, fmt: str, has_srt: bool) -> str:
@@ -226,7 +231,7 @@ def _readme_text(project: ProjectState, fmt: str, has_srt: bool) -> str:
     """
     lines = [
         README_MARKER,
-        f"{project.name} — podcast-prep 書き出し",
+        f"{project.name} — seam 書き出し",
         "",
         "■ このフォルダの中身",
         "",
@@ -243,7 +248,7 @@ def _readme_text(project: ProjectState, fmt: str, has_srt: bool) -> str:
         "",
         "  speakerA_source.wav / speakerB_source.wav",
         "      再編集用の素材（編集前・正規化済み）。",
-        "      これがあると、このフォルダを podcast-prep の「開く」に渡して",
+        "      これがあると、このフォルダを seam の「開く」に渡して",
         "      続きから編集できます。フォルダごと移動しても大丈夫です。",
         "",
         "■ 容量を減らしたいとき",

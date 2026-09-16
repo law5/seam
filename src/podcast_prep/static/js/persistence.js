@@ -298,7 +298,7 @@ export async function openProjectFolder(folderPath) {
   return data.project;
 }
 
-// Issue #18: 書き出し先の選択肢。PODCAST_PREP_EXPORT_DIR 未設定なら
+// Issue #18: 書き出し先の選択肢。SEAM_EXPORT_DIR 未設定なら
 // targets は「プロジェクト内」1件（configured=false）。
 export async function fetchExportTargets(projectId) {
   const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";

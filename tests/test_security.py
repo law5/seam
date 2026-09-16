@@ -11,7 +11,7 @@ from podcast_prep.server import ALLOWED_AUDIO_EXTS, _resolve_export_target, _saf
 
 
 def _use_tmp_data_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     # config.data_dir() が環境変数を読む実装を前提。storageはそれ経由でprojects_rootを得る
     return tmp_path
 
@@ -80,7 +80,7 @@ def test_export_target_absolute_path_outside_allowed_bases_rejected(monkeypatch,
     未設定の環境では絶対パスは一切通らない。
     """
     _use_tmp_data_dir(monkeypatch, tmp_path)
-    monkeypatch.delenv("PODCAST_PREP_EXPORT_DIR", raising=False)
+    monkeypatch.delenv("SEAM_EXPORT_DIR", raising=False)
     pid = "proj1"
     storage.project_dir(pid)
     with pytest.raises(ValueError):
@@ -96,23 +96,23 @@ def test_export_target_default_is_exports_root(monkeypatch, tmp_path):
     assert target == (storage.project_dir(pid) / "exports").resolve()
 
 
-# ── Issue #18: PODCAST_PREP_EXPORT_DIR を許可ベースに追加したときの境界 ──
+# ── Issue #18: SEAM_EXPORT_DIR を許可ベースに追加したときの境界 ──
 
 
 def _use_export_base(monkeypatch, tmp_path):
     base = tmp_path / "Podcast" / "exports"
     base.mkdir(parents=True)
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", str(base))
+    monkeypatch.setenv("SEAM_EXPORT_DIR", str(base))
     return base.resolve()
 
 
 def test_export_base_dir_unset_is_none(monkeypatch):
-    monkeypatch.delenv("PODCAST_PREP_EXPORT_DIR", raising=False)
+    monkeypatch.delenv("SEAM_EXPORT_DIR", raising=False)
     assert config.export_base_dir() is None
 
 
 def test_export_base_dir_blank_is_none(monkeypatch):
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", "   ")
+    monkeypatch.setenv("SEAM_EXPORT_DIR", "   ")
     assert config.export_base_dir() is None
 
 

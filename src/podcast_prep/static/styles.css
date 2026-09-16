@@ -1,4 +1,4 @@
-/* podcast-prep — Apple HIG準拠テーマ（Issue #14, 2026-08改訂 / Issue #59 パレット一元化）。
+/* seam — Apple HIG準拠テーマ（Issue #14, 2026-08改訂 / Issue #59 パレット一元化）。
    設計原則:
    - macOS セマンティックカラー体系を CSS 変数で構築（label / secondary-label /
      separator / control / accent）。アクセント = Ink（中立の主行動色）。

@@ -32,7 +32,7 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _tmp_data(tmp_path, monkeypatch):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
 
 
 def _write_wav(path: Path, seconds: float = 0.2, rate: int = 8000) -> None:

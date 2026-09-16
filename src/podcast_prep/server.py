@@ -98,7 +98,7 @@ async def _static_no_cache(request, call_next):
 # の到達自体は止めない）ので、明示的に検査する:
 #
 #   - Host（全メソッド対象）: ループバック表記（127.0.0.1 / localhost / ::1）と
-#     PODCAST_PREP_HOST のバインド先以外は 403。DNS rebinding は応答が**読める**
+#     SEAM_HOST のバインド先以外は 403。DNS rebinding は応答が**読める**
 #     攻撃なので GET も対象に含める。
 #   - Origin（状態変更系 = GET/HEAD/OPTIONS 以外のみ）: Origin ヘッダが付いていて
 #     このサーバ自身のオリジンでなければ 403。Origin が無いリクエスト
@@ -115,7 +115,7 @@ _ORIGIN_GUARD_DETAIL = "別のサイトからのリクエストは受け付け�
 def _guard_hostnames() -> frozenset[str]:
     """許可する Host のホスト名部分（小文字）。
 
-    ループバック表記に加え、PODCAST_PREP_HOST で別バインドが設定されていれば
+    ループバック表記に加え、SEAM_HOST で別バインドが設定されていれば
     それも許可する（config.app_host() と整合）。0.0.0.0 / :: は「全インター
     フェースにバインドせよ」という指定であって、クライアントが Host に載せて
     くる正規の名前ではないため加えない。
@@ -681,7 +681,7 @@ def _resolve_export_target(project_id: str, output_dir: str | None) -> Path:
 
     許可ベースは3つ:
       1. プロジェクトの `exports/`（常に許可・既定）
-      2. `PODCAST_PREP_EXPORT_DIR`（設定されているときだけ）
+      2. `SEAM_EXPORT_DIR`（設定されているときだけ）
       3. ユーザーがフォルダ選択ダイアログで**実際に選んだ**フォルダ（`_chosen_dirs`）
 
     受け付け方:
@@ -1538,7 +1538,7 @@ async def open_project(
     # 同送された音源は一時ディレクトリへ受けてから相対解決の探索先にする。
     # ファイル名は _safe_audio_name でサニタイズするので、アップロード名由来の
     # パス区切り・'..' は一時ディレクトリの外へ出ない。
-    with tempfile.TemporaryDirectory(prefix="podcast-prep-open-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="seam-open-") as tmpdir:
         if audio:
             staged = Path(tmpdir)
             for index, upload in enumerate(audio):
@@ -2453,11 +2453,11 @@ def _reveal_command_for_platform() -> str:
 def _resolve_reveal_target(project_id: str, raw_path: Any) -> Path:
     """開く対象を**許可されたベース配下**に限定して解決する。
 
-    許可ベース 1〜3 は _resolve_export_target と同一（Issue #18 で PODCAST_PREP_EXPORT_DIR が
+    許可ベース 1〜3 は _resolve_export_target と同一（Issue #18 で SEAM_EXPORT_DIR が
     加わったため、書き出せる場所は必ず開けるようにここも揃える。揃っていないと
     EXPORT_DIR へ書き出した直後に「Finderで開く」が 400 になる — 実機で発生）:
       1. プロジェクトの `exports/`（常に許可・既定）
-      2. `PODCAST_PREP_EXPORT_DIR`（設定されているときだけ）
+      2. `SEAM_EXPORT_DIR`（設定されているときだけ）
       3. フォルダ選択ダイアログで選ばれたフォルダ（`_chosen_dirs`）
       4. 作業フォルダ**そのもの**（`project_dir(pid)` ちょうど。設定パネルの
          「Finderで開く」用。配下の個別ファイルまでは開放しない = exports 限定は維持）

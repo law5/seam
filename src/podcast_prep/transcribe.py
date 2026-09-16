@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .config import models_dir
+from .config import env, models_dir
 from .models import ProjectState, SPEAKERS, TranscriptSegment
 from .storage import resolve_project_file
 from .timeline import link_transcripts_to_blocks, searchable_block_text
@@ -89,7 +88,7 @@ def resolve_whisper_runtime(settings: dict[str, Any]) -> dict[str, str]:
 
     優先順位（device / compute_type それぞれ独立に適用）:
     1. settings の whisper_device / whisper_compute_type（"auto" 以外が明示設定されていれば最優先）
-    2. 環境変数 PODCAST_PREP_WHISPER_DEVICE / PODCAST_PREP_WHISPER_COMPUTE_TYPE
+    2. 環境変数 SEAM_WHISPER_DEVICE / SEAM_WHISPER_COMPUTE_TYPE（旧 PODCAST_PREP_* も可）
     3. "auto"
     """
 
@@ -97,12 +96,11 @@ def resolve_whisper_runtime(settings: dict[str, Any]) -> dict[str, str]:
         value = str(settings.get(settings_key) or "auto").strip() or "auto"
         if value != "auto":
             return value
-        env = os.environ.get(env_name, "").strip()
-        return env or "auto"
+        return env(env_name, "").strip() or "auto"
 
     return {
-        "device": pick("whisper_device", "PODCAST_PREP_WHISPER_DEVICE"),
-        "compute_type": pick("whisper_compute_type", "PODCAST_PREP_WHISPER_COMPUTE_TYPE"),
+        "device": pick("whisper_device", "WHISPER_DEVICE"),
+        "compute_type": pick("whisper_compute_type", "WHISPER_COMPUTE_TYPE"),
     }
 
 
@@ -134,7 +132,7 @@ def resolve_whisper_model(model_ref: str | None, settings: dict[str, Any]) -> st
     candidate = models_dir() / f"faster-whisper-{ref}"
     if candidate.exists():
         return str(candidate)
-    if os.environ.get("PODCAST_PREP_WHISPER_LOCAL_ONLY", "1") == "0":
+    if env("WHISPER_LOCAL_ONLY", "1") == "0":
         # オンライン利用を明示した場合のみ、モデル名を faster-whisper にそのまま委ねる
         return ref
     raise RuntimeError(
@@ -165,7 +163,7 @@ def transcribe_project(
             progress(value, message)
 
     model_ref = resolve_whisper_model(model_name_or_path, project.settings)
-    local_only = os.environ.get("PODCAST_PREP_WHISPER_LOCAL_ONLY", "1") != "0"
+    local_only = env("WHISPER_LOCAL_ONLY", "1") != "0"
     # device / compute_type の優先順位: settings（"auto"以外の明示設定が最優先）
     # → 環境変数 → "auto"（resolve_whisper_runtime の docstring 参照）
     runtime = resolve_whisper_runtime(project.settings)

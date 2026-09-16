@@ -64,7 +64,7 @@ _CORRUPTED_DETAIL = (
 )
 
 # キャッシュは data_dir ごとに持つ。テストは monkeypatch で
-# PODCAST_PREP_DATA_DIR を差し替えるため、キーに含めないと前のテストの
+# SEAM_DATA_DIR を差し替えるため、キーに含めないと前のテストの
 # 内容を掴んだままになる（テスト間干渉の温床）。
 # 値は (mtime_ns, entries, corrupted)。corrupted は「全体がパース不能」の印で、
 # mtime と同じライフサイクルで更新される = ファイルが修復されれば自動で解除。

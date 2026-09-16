@@ -881,7 +881,7 @@ function init() {
   initExportTargets(); // Issue #18: 非同期。失敗しても従来UIのまま使える
 }
 
-// Issue #18: PODCAST_PREP_EXPORT_DIR が設定されているときだけ書き出し先を
+// Issue #18: SEAM_EXPORT_DIR が設定されているときだけ書き出し先を
 // プルダウン表示に切り替える。未設定・取得失敗時は従来のラベル入力のまま。
 async function initExportTargets() {
   const row = $("exportBaseRow");
