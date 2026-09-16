@@ -20,6 +20,30 @@ const EPS = 1e-6;
 
 // ── 純関数（テスト対象・状態非依存） ─────────────────────────────
 
+// Issue #31: 出力レイテンシのサニタイズ。AudioContext.outputLatency は
+// Bluetooth で 150〜500ms・負荷やデバイス切替で動的に変わるため**都度読む**
+// （キャッシュ禁止）。未実装環境（undefined）・非有限・負値は 0 に倒す。
+// ctx.baseLatency は含めない — 出力経路の遅延の正は outputLatency。
+export function sanitizeOutputLatency(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+// 聴感位置（Issue #31）: 「いま耳に聞こえているタイムライン時刻」。
+// エンジン位置から outputLatency を引き、[0, end] にクランプする。
+// 再生ヘッド描画・時刻表示・分割 S・±5s 等の**ユーザーの耳基準**の系はこちら。
+export function audiblePosition({ posAtStart, ctxTime, ctxT0, outputLatency, end }) {
+  const latency = sanitizeOutputLatency(outputLatency);
+  const pos = posAtStart + Math.max(0, ctxTime - latency - ctxT0);
+  const max = Number.isFinite(end) ? Math.max(0, end) : Number.POSITIVE_INFINITY;
+  return clamp(pos, 0, max);
+}
+
+// エンジン位置: 「いまエンジンに送っているタイムライン時刻」（従来の getCurrentTime）。
+// スケジューリングの先読み窓など**エンジン都合**の系はこちら。
+export function enginePosition({ posAtStart, ctxTime, ctxT0 }) {
+  return posAtStart + Math.max(0, ctxTime - ctxT0);
+}
+
 // [fromT, toT) と交差するアクティブブロックを窓でクリップして列挙する。
 // fadeIn = セグメント頭がブロック本来の頭に一致 / fadeOut = 尻が本来の尻に一致。
 // index は timelineModel.getIndex の TimelineIndex（byStart は (start, source_start, id) 昇順・deleted除外済み）。
@@ -221,14 +245,18 @@ async function scheduleSegment(sp, seg, gen, cfMs) {
 
 function schedulePass() {
   if (!playing || !prepared || !ctx || !state.project) return;
-  const now = getCurrentTime();
   const end = timelineEndNow();
-  if (now >= end - EPS) {
+  // 終了判定は**聴感位置**（Issue #31）: エンジン位置で止めると出力レイテンシ分
+  // （Bluetooth で最大 0.5s）の末尾がまだ鳴っているのに pause され、尻切れになる。
+  // エンジンが終端まで送り終えた後は segments が空になるだけで害はない。
+  if (getCurrentTime() >= end - EPS) {
     finishAtEnd(Math.max(0, end));
     return;
   }
   const gen = generation;
-  const horizon = now + LOOKAHEAD_S;
+  // 先読み窓の起点は**エンジン位置**: 聴感位置を使うとレイテンシ分だけ窓が過去へ
+  // ずれ、実効ルックアヘッドが縮む（スケジューリングはエンジン都合の系）。
+  const horizon = engineTimeNow() + LOOKAHEAD_S;
   const index = getIndex(state.project, state.editVersion);
   const cfMs = crossfadeMsNow();
   for (const sp of SPEAKERS) {
@@ -382,6 +410,11 @@ export async function play() {
 
 export function pause() {
   if (!playing) return;
+  // 一時停止位置は**聴感位置**（Issue #31）: 「⏸ → ヘッドが指す場所 = 直前まで
+  // 聞こえていた場所」。resume（play）はこの値を posAtStart にして新規スケジュール
+  // するため、エンジン位置への逆変換は不要 — 送信済みで未再生だったレイテンシ分
+  // （Bluetooth で最大 0.5s）は resume 時に聞こえていた位置から鳴り直される。
+  // エンジン位置で保存すると、聞こえていない未来へ飛んで語の途中が欠落する。
   pausedAt = getCurrentTime();
   playing = false;
   generation++;
@@ -427,9 +460,25 @@ export function seekToSelectionStart(start) {
   return true;
 }
 
+// 聴感位置（公開クロック。Issue #31）: 外部の呼び出し元（再生ヘッド描画・時刻表示・
+// 分割 S・±5s・無音の挿入/削除の基準位置）はすべて「ユーザーの耳基準」なのでこちら。
+// Bluetooth 出力（outputLatency 150〜500ms）でも波形上のヘッドと聞こえている声が一致する。
+// outputLatency は都度読む（デバイス切替・負荷で動的に変わる）。停止中は pausedAt。
 export function getCurrentTime() {
   if (!playing || !ctx) return pausedAt;
-  return posAtStart + Math.max(0, ctx.currentTime - ctxT0);
+  return audiblePosition({
+    posAtStart,
+    ctxTime: ctx.currentTime,
+    ctxT0,
+    outputLatency: ctx.outputLatency,
+    end: timelineEndNow(),
+  });
+}
+
+// エンジン位置（内部クロック）: schedulePass の先読み窓の起点だけが使う。
+function engineTimeNow() {
+  if (!playing || !ctx) return pausedAt;
+  return enginePosition({ posAtStart, ctxTime: ctx.currentTime, ctxT0 });
 }
 
 export function isPlaying() {
@@ -452,6 +501,9 @@ export function setTrackMute(speaker, isMuted) {
 export function notifyBlocksChanged() {
   if (!playing || !ctx) return;
   generation++;
+  // 再スケジュール起点は**聴感位置**（pause→resume と同じ判断。Issue #31）:
+  // 編集の瞬間に聞こえていた場所から続ける。エンジン位置だとレイテンシ分先へ
+  // スキップし、編集のたびに音が飛んで聞こえる。
   const t = getCurrentTime();
   dipAndStop();
   posAtStart = t;
