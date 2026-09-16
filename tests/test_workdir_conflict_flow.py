@@ -36,7 +36,7 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _tmp_data(tmp_path, monkeypatch):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
 
 
 @pytest.fixture(autouse=True)

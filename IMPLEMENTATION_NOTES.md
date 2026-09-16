@@ -2,8 +2,8 @@
 
 ## 実装サマリー
 
-- `uv` 管理の Python 3.12+ / FastAPI アプリ。既定は `127.0.0.1:4520`（`PODCAST_PREP_HOST` / `PODCAST_PREP_PORT` / `PODCAST_PREP_DATA_DIR` で変更可能）。
-- 取込: ffmpeg `loudnorm` 2-pass 正規化（`-progress pipe:1` の実測進捗つき。linear 適用が dynamic へフォールバックした場合は `normalization_fallback` を記録）→ VAD（webrtcvad + エネルギー判定フォールバック）→ 波形ピーク生成。
+- `uv` 管理の Python 3.12+ / FastAPI アプリ。既定は `127.0.0.1:4520`（`SEAM_HOST` / `SEAM_PORT` / `SEAM_DATA_DIR` で変更可能。旧 `PODCAST_PREP_*` も当面読む）。
+- 取込: ffmpeg `loudnorm` 3パス正規化（計測 → linear適用 → 検証）（`-progress pipe:1` の実測進捗つき。linear 適用が dynamic へフォールバックした場合は `normalization_fallback` を記録）→ VAD（webrtcvad + エネルギー判定フォールバック）→ 波形ピーク生成。
 - ピークは PPK1 形式（200 bins/秒・Uint8・自己記述ヘッダ）のサイドカーバイナリ `speaker{A,B}_peaks.u8` として保存し、`GET /peaks/{speaker}` はバイナリ配信。`project.json` にはピークを埋め込まない（旧プロジェクトは初回アクセス時に遅延生成）。
 - フロントは wavesurfer.js を全廃し、素の ES modules（`static/js/`、ビルドなし・外部CDN依存なし）で再構築:
   - クリップ式波形描画 — 単一スクロールコンテナ + sticky canvas の仮想スクロール、ビューポートカリング、DPR対応

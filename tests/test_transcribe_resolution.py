@@ -16,9 +16,9 @@ from podcast_prep.transcribe import (
 
 
 def _use_tmp_data_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     # 既定の local_only=True 挙動をテスト前提にする（環境の影響を排除）
-    monkeypatch.delenv("PODCAST_PREP_WHISPER_LOCAL_ONLY", raising=False)
+    monkeypatch.delenv("SEAM_WHISPER_LOCAL_ONLY", raising=False)
     return tmp_path
 
 
@@ -58,7 +58,7 @@ def test_missing_model_raises_with_setup_guidance(monkeypatch, tmp_path):
 
 def test_local_only_zero_passes_name_through(monkeypatch, tmp_path):
     _use_tmp_data_dir(monkeypatch, tmp_path)
-    monkeypatch.setenv("PODCAST_PREP_WHISPER_LOCAL_ONLY", "0")
+    monkeypatch.setenv("SEAM_WHISPER_LOCAL_ONLY", "0")
     # オンライン許可時はモデル名がそのまま faster-whisper に渡る（RuntimeErrorにならない）
     assert resolve_whisper_model("medium", {}) == "medium"
 
@@ -67,8 +67,8 @@ def test_local_only_zero_passes_name_through(monkeypatch, tmp_path):
 
 
 def _clear_runtime_env(monkeypatch):
-    monkeypatch.delenv("PODCAST_PREP_WHISPER_DEVICE", raising=False)
-    monkeypatch.delenv("PODCAST_PREP_WHISPER_COMPUTE_TYPE", raising=False)
+    monkeypatch.delenv("SEAM_WHISPER_DEVICE", raising=False)
+    monkeypatch.delenv("SEAM_WHISPER_COMPUTE_TYPE", raising=False)
 
 
 def test_runtime_defaults_to_auto(monkeypatch):
@@ -78,8 +78,8 @@ def test_runtime_defaults_to_auto(monkeypatch):
 
 def test_runtime_settings_explicit_beats_env(monkeypatch):
     _clear_runtime_env(monkeypatch)
-    monkeypatch.setenv("PODCAST_PREP_WHISPER_COMPUTE_TYPE", "float32")
-    monkeypatch.setenv("PODCAST_PREP_WHISPER_DEVICE", "cuda")
+    monkeypatch.setenv("SEAM_WHISPER_COMPUTE_TYPE", "float32")
+    monkeypatch.setenv("SEAM_WHISPER_DEVICE", "cuda")
     runtime = resolve_whisper_runtime(
         {"whisper_compute_type": "int8", "whisper_device": "cpu"}
     )
@@ -88,7 +88,7 @@ def test_runtime_settings_explicit_beats_env(monkeypatch):
 
 def test_runtime_env_used_when_settings_auto(monkeypatch):
     _clear_runtime_env(monkeypatch)
-    monkeypatch.setenv("PODCAST_PREP_WHISPER_COMPUTE_TYPE", "int8")
+    monkeypatch.setenv("SEAM_WHISPER_COMPUTE_TYPE", "int8")
     runtime = resolve_whisper_runtime(
         {"whisper_compute_type": "auto", "whisper_device": "auto"}
     )
@@ -97,7 +97,7 @@ def test_runtime_env_used_when_settings_auto(monkeypatch):
 
 def test_runtime_keys_resolve_independently(monkeypatch):
     _clear_runtime_env(monkeypatch)
-    monkeypatch.setenv("PODCAST_PREP_WHISPER_DEVICE", "cpu")
+    monkeypatch.setenv("SEAM_WHISPER_DEVICE", "cpu")
     runtime = resolve_whisper_runtime({"whisper_compute_type": "float32"})
     # compute_type は settings 明示、device は settings 欠損 → env
     assert runtime == {"device": "cpu", "compute_type": "float32"}
@@ -114,7 +114,7 @@ def test_runtime_blank_settings_treated_as_auto(monkeypatch, junk):
 
 def test_runtime_blank_env_treated_as_auto(monkeypatch):
     _clear_runtime_env(monkeypatch)
-    monkeypatch.setenv("PODCAST_PREP_WHISPER_COMPUTE_TYPE", "   ")
+    monkeypatch.setenv("SEAM_WHISPER_COMPUTE_TYPE", "   ")
     assert resolve_whisper_runtime({})["compute_type"] == "auto"
 
 

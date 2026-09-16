@@ -36,7 +36,7 @@ requires_ffmpeg = pytest.mark.skipif(
 
 
 def _make_project(tmp_path, monkeypatch, pid="proj-api"):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     project = ProjectState.new(pid, "server api test")
     project.status = "ready"
     storage.save_project(project)
@@ -82,7 +82,7 @@ def client():
     ],
 )
 def test_missing_project_returns_404(tmp_path, monkeypatch, client, method, url):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     res = client.request(method, url)
     assert res.status_code == 404
 
@@ -98,29 +98,29 @@ def _upload_project_json(client, content: bytes):
 
 
 def test_open_rejects_invalid_json(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     assert _upload_project_json(client, b"{not json").status_code == 400
 
 
 def test_open_rejects_non_object_json(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     assert _upload_project_json(client, b"[1, 2, 3]").status_code == 400
 
 
 def test_open_rejects_missing_required_keys(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     assert _upload_project_json(client, b"{}").status_code == 400  # id 欠落 → KeyError → 400
 
 
 def test_open_enforces_size_limit(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(server, "MAX_UPLOAD_BYTES", 16)
     payload = b'{"id": "proj-open", "name": "long enough to exceed"}'
     assert _upload_project_json(client, payload).status_code == 413
 
 
 def test_open_valid_project_roundtrip(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     doc = ProjectState.new("proj-open", "opened").to_dict()
     doc["status"] = "importing"  # open は status を ready に強制する
     import json as _json
@@ -299,7 +299,7 @@ def test_raw_put_rejects_non_numeric_peaks_bins(tmp_path, monkeypatch, client):
 
 def test_open_rejects_null_numeric_setting(tmp_path, monkeypatch, client):
     """QA再現: open で min_overlap_s: null が 200 受理 → 有効ペイロードの PUT も 500。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     doc = ProjectState.new("proj-null-setting", "opened").to_dict()
     doc["settings"]["min_overlap_s"] = None
     res = _upload_project_json(client, json.dumps(doc).encode("utf-8"))
@@ -309,7 +309,7 @@ def test_open_rejects_null_numeric_setting(tmp_path, monkeypatch, client):
 
 def test_open_coerces_numeric_strings_and_keeps_default_merge(tmp_path, monkeypatch, client):
     """正常系維持: 欠損キーのデフォルトマージ + 数値文字列の型強制（保存系が全経路生存）。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     doc = ProjectState.new("proj-coerce", "opened").to_dict()
     doc["settings"] = {"min_overlap_s": "0.5", "peaks_bins_per_sec": "100"}  # 他キー欠損
     res = _upload_project_json(client, json.dumps(doc).encode("utf-8"))
@@ -397,7 +397,7 @@ def test_atomic_write_bytes_keeps_original_on_failure(tmp_path, monkeypatch):
 
 def test_save_project_failure_keeps_previous_json(tmp_path, monkeypatch):
     """project.json も tmp+replace: 書込失敗がクラッシュしても全損しない。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     project = ProjectState.new("proj-atomic", "atomic")
     storage.save_project(project)
     before = storage.project_json_path(project.id).read_bytes()
@@ -411,7 +411,7 @@ def test_save_project_failure_keeps_previous_json(tmp_path, monkeypatch):
 
 
 def test_save_project_leaves_no_tmp_residue(tmp_path, monkeypatch):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     project = ProjectState.new("proj-clean", "clean")
     storage.save_project(project)
     storage.save_project_dict(storage.load_project_dict(project.id))
@@ -424,7 +424,7 @@ def test_save_project_leaves_no_tmp_residue(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("bad_id", ["..", ".", "", "evil/nested", "a" * 65, "has space"])
 def test_open_rejects_invalid_project_ids(tmp_path, monkeypatch, client, bad_id):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     doc = ProjectState.new("placeholder", "opened").to_dict()
     doc["id"] = bad_id
     res = _upload_project_json(client, json.dumps(doc).encode("utf-8"))
@@ -435,14 +435,14 @@ def test_open_rejects_invalid_project_ids(tmp_path, monkeypatch, client, bad_id)
 
 
 def test_open_accepts_hyphen_underscore_ids(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     doc = ProjectState.new("Proj_ok-123", "opened").to_dict()
     res = _upload_project_json(client, json.dumps(doc).encode("utf-8"))
     assert res.status_code == 200
 
 
 def test_raw_put_rejects_invalid_path_id(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     bad_id = "a" * 65
     res = client.put(f"/api/projects/{bad_id}/raw", json={"id": bad_id})
     assert res.status_code == 400
@@ -451,7 +451,7 @@ def test_raw_put_rejects_invalid_path_id(tmp_path, monkeypatch, client):
 
 def test_404_probe_does_not_create_directories(tmp_path, monkeypatch, client):
     """QA再現: 存在しない id の GET のたびに空ディレクトリが蓄積されていた。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     for url in (
         "/api/projects/no-such-id-12345",
         "/api/projects/no-such-id-12345/raw",
@@ -874,7 +874,7 @@ def test_normalize_endpoint_defaults_to_both_speakers(tmp_path, monkeypatch, cli
 
 
 def test_normalize_endpoint_404_for_missing_project(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     assert client.post("/api/projects/no-such/normalize").status_code == 404
 
 
@@ -1178,7 +1178,7 @@ def test_reveal_unsupported_platform_is_501(tmp_path, monkeypatch, client):
 
 
 def test_reveal_unknown_project_is_404(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     calls: list = []
     monkeypatch.setattr(server.sys, "platform", "darwin")
     monkeypatch.setattr(server.subprocess, "run", _fake_run(calls))
@@ -1227,7 +1227,7 @@ def test_run_export_timeout_becomes_job_error(tmp_path, monkeypatch):
 def test_static_responses_are_no_cache(tmp_path, monkeypatch):
     # UI更新後にブラウザのヒューリスティックキャッシュが旧 index/JS/CSS を出し続けないよう、
     # "/" と "/static/*" は Cache-Control: no-cache（毎回再検証・304利用）で配る。
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     client = TestClient(server.app)
     for path in ("/", "/static/styles.css", "/static/js/main.js"):
         response = client.get(path)
@@ -1263,7 +1263,7 @@ def test_create_project_preserves_uploaded_wav_extension(tmp_path, monkeypatch, 
 
     以前は拡張子が speakerA.mp3 固定に倒れており、wav 素材でも mp3 名で保存されていた。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     calls: list[tuple] = []
     _stub_audio_pipeline(monkeypatch, calls)
 
@@ -1293,7 +1293,7 @@ def test_create_project_preserves_uploaded_wav_extension(tmp_path, monkeypatch, 
 
 def test_create_project_falls_back_for_unknown_extension(tmp_path, monkeypatch, client):
     """未知拡張子・拡張子なしは話者既定名（speakerX.wav）へ倒れること。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     calls: list[tuple] = []
     _stub_audio_pipeline(monkeypatch, calls)
 
@@ -1316,7 +1316,7 @@ def test_create_project_same_filename_splits_by_speaker_keeping_extension(
     tmp_path, monkeypatch, client
 ):
     """同名を2スロットに入れても上書きせず、拡張子を保ったまま話者名で分けること。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     calls: list[tuple] = []
     _stub_audio_pipeline(monkeypatch, calls)
 
@@ -1338,7 +1338,7 @@ def test_create_project_same_filename_splits_by_speaker_keeping_extension(
 @requires_ffmpeg
 def test_import_real_wav_runs_full_pipeline_and_builds_blocks(tmp_path, monkeypatch, client):
     """実 ffmpeg で合成 wav を取り込み、ブロックが生成されるまで完走すること。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     # VAD だけは合成音の性質に依存しないよう固定（ffmpeg 経路の検証が目的）
     monkeypatch.setattr(
         server, "detect_speech_intervals", lambda path, aggressiveness=2: [(0.0, 1.0)]
@@ -1377,7 +1377,7 @@ def test_upload_named_like_derived_artifact_falls_back(tmp_path, monkeypatch):
     回帰: speakerA_normalized.wav をアップロードすると original_file と ffmpeg の
     出力先が同一パスになり、in-place 編集拒否で取込も後がけ正規化も永久に失敗した。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     for speaker in ("A", "B"):
         reserved = f"speaker{speaker}_normalized.wav"
         assert reserved in server.RESERVED_UPLOAD_NAMES
@@ -1418,9 +1418,9 @@ def test_reveal_default_branch_rejects_symlink_escape(tmp_path, monkeypatch, cli
 
 
 def test_reveal_allows_configured_export_dir(tmp_path, monkeypatch, client):
-    """PODCAST_PREP_EXPORT_DIR 配下も「Finderで開く」の対象にする。
+    """SEAM_EXPORT_DIR 配下も「Finderで開く」の対象にする。
 
-    回帰: Issue #18 で書き出し先に PODCAST_PREP_EXPORT_DIR が加わったのに reveal 側の
+    回帰: Issue #18 で書き出し先に SEAM_EXPORT_DIR が加わったのに reveal 側の
     許可ベースが exports 配下のままで、EXPORT_DIR へ書き出した直後に開こうとすると
     400「path escapes...」になった（実機で発生）。書き出せる場所は必ず開けること。
     """
@@ -1429,7 +1429,7 @@ def test_reveal_allows_configured_export_dir(tmp_path, monkeypatch, client):
     target = export_base / "ep1"
     target.mkdir(parents=True)
     (target / "speakerA.wav").write_bytes(b"RIFFfake")
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", str(export_base))
+    monkeypatch.setenv("SEAM_EXPORT_DIR", str(export_base))
     calls: list = []
     monkeypatch.setattr(server.sys, "platform", "darwin")
     monkeypatch.setattr(server.subprocess, "run", _fake_run(calls))
@@ -1446,7 +1446,7 @@ def test_reveal_still_rejects_outside_allowed_bases(tmp_path, monkeypatch, clien
     project = _make_project(tmp_path, monkeypatch)
     export_base = tmp_path / "Podcast" / "exports"
     export_base.mkdir(parents=True)
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", str(export_base))
+    monkeypatch.setenv("SEAM_EXPORT_DIR", str(export_base))
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     calls: list = []
@@ -1489,7 +1489,7 @@ def test_create_project_pipes_true_peak_and_tolerance_to_audio(
     tmp_path, monkeypatch, client
 ):
     """取込経路: Form の true_peak/tolerance が settings に永続化され audio 層まで届く。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     captured: list[dict] = []
     _capture_loudnorm_kwargs(monkeypatch, captured)
 
@@ -1500,7 +1500,7 @@ def test_create_project_pipes_true_peak_and_tolerance_to_audio(
             "speaker_a": ("a.wav", payload, "audio/wav"),
             "speaker_b": ("b.wav", payload, "audio/wav"),
         },
-        data={"target_lufs": "-16", "true_peak": "-2.0", "tolerance": "1.0"},
+        data={"normalize": "true", "target_lufs": "-16", "true_peak": "-2.0", "tolerance": "1.0"},
     )
     assert res.status_code == 200, res.text
     saved = storage.load_project(res.json()["project"]["id"])
@@ -1513,8 +1513,35 @@ def test_create_project_pipes_true_peak_and_tolerance_to_audio(
 
 
 def test_create_project_defaults_keep_current_behavior(tmp_path, monkeypatch, client):
-    """フィールド未送信時の既定: true_peak=-1.5（現行固定値）/ tolerance=0.5。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    """ラウドネス項目未送信時の既定: true_peak=-1.5（現行固定値）/ tolerance=0.5。
+
+    normalize は UI 既定（OFF）に合わせて API 既定も False のため、
+    本テストの目的（ラウドネス既定値の検証）には明示 ON で臨む。
+    """
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
+    captured: list[dict] = []
+    _capture_loudnorm_kwargs(monkeypatch, captured)
+
+    payload = _wav_bytes()
+    res = client.post(
+        "/api/projects",
+        files={
+            "speaker_a": ("a.wav", payload, "audio/wav"),
+            "speaker_b": ("b.wav", payload, "audio/wav"),
+        },
+        data={"normalize": "true"},
+    )
+    assert res.status_code == 200, res.text
+    saved = storage.load_project(res.json()["project"]["id"])
+    assert saved.settings["true_peak"] == -1.5
+    assert saved.settings["tolerance"] == 0.5
+    assert captured and all(k["true_peak"] == -1.5 for k in captured)
+    assert all(k["tolerance"] == 0.5 for k in captured)
+
+
+def test_create_project_normalize_defaults_off(tmp_path, monkeypatch, client):
+    """normalize 未送信の API 直叩きは正規化しない（UI 既定 OFF と一致）。"""
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     captured: list[dict] = []
     _capture_loudnorm_kwargs(monkeypatch, captured)
 
@@ -1527,11 +1554,7 @@ def test_create_project_defaults_keep_current_behavior(tmp_path, monkeypatch, cl
         },
     )
     assert res.status_code == 200, res.text
-    saved = storage.load_project(res.json()["project"]["id"])
-    assert saved.settings["true_peak"] == -1.5
-    assert saved.settings["tolerance"] == 0.5
-    assert captured and all(k["true_peak"] == -1.5 for k in captured)
-    assert all(k["tolerance"] == 0.5 for k in captured)
+    assert captured == []  # loudnorm は呼ばれない
 
 
 @pytest.mark.parametrize(
@@ -1545,7 +1568,7 @@ def test_create_project_defaults_keep_current_behavior(tmp_path, monkeypatch, cl
 def test_create_project_rejects_out_of_range_loudnorm_options(
     tmp_path, monkeypatch, client, data
 ):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     captured: list[dict] = []
     _capture_loudnorm_kwargs(monkeypatch, captured)
 
@@ -1569,7 +1592,7 @@ def test_create_project_rejects_non_finite_tolerance(tmp_path, monkeypatch, clie
     どちらの層で止まるかはフレームワークのパース仕様に依存するため固定しない。
     inf を settings（JSON）に永続化させないことが目的。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     captured: list[dict] = []
     _capture_loudnorm_kwargs(monkeypatch, captured)
 
@@ -1588,7 +1611,7 @@ def test_create_project_rejects_non_finite_tolerance(tmp_path, monkeypatch, clie
 
 def test_create_project_true_peak_boundaries_are_accepted(tmp_path, monkeypatch, client):
     """境界値 -9 / 0 は受け付ける（loudnorm の受付範囲そのもの）。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     captured: list[dict] = []
     _capture_loudnorm_kwargs(monkeypatch, captured)
     payload = _wav_bytes()

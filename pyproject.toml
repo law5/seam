@@ -1,5 +1,5 @@
 [project]
-name = "podcast-prep"
+name = "seam"
 version = "0.1.0"
 description = "Local-only prep tool for two-speaker podcast recordings: loudness, overlap detection, clip editing, transcription, export."
 readme = "README.md"
@@ -34,8 +34,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/law5/podcast-prep"
-Issues = "https://github.com/law5/podcast-prep/issues"
+Repository = "https://github.com/law5/seam"
+Issues = "https://github.com/law5/seam/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -44,11 +44,18 @@ dev = [
 ]
 
 [project.scripts]
+seam = "podcast_prep.cli:main"
+# 旧名も当面残す（手元のスクリプト・メモを壊さないため）
 podcast-prep = "podcast_prep.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# 配布名は seam、実装パッケージ名は podcast_prep のまま
+# （import 文の一括改名は公開前の表示名整理のスコープ外）
+packages = ["src/podcast_prep"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -44,12 +44,12 @@ def main() -> int:
     parser.add_argument(
         "--data-dir",
         default=None,
-        help="データディレクトリの上書き（既定: PODCAST_PREP_DATA_DIR または ./.podcast_prep）",
+        help="データディレクトリの上書き（既定: SEAM_DATA_DIR または ./.seam）",
     )
     args = parser.parse_args()
 
     if args.data_dir:
-        os.environ["PODCAST_PREP_DATA_DIR"] = args.data_dir
+        os.environ["SEAM_DATA_DIR"] = args.data_dir
 
     transcribe = _transcribe_module()
 

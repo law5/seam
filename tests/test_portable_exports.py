@@ -39,7 +39,7 @@ def _write_wav(path: Path, seconds: float = 1.0, rate: int = 48000) -> None:
 
 def _make_full_project(tmp_path, monkeypatch, pid="proj-portable") -> ProjectState:
     """両トラックに実ファイル（original + normalized）を持つプロジェクトを作る。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     project = ProjectState.new(pid, "portable test")
     project.status = "ready"
     pdir = storage.project_dir(pid, create=True)
@@ -186,7 +186,7 @@ def test_open_legacy_absolute_paths_need_the_audio_alongside(tmp_path, monkeypat
     許可ディレクトリ（source_dir / project_dir）配下に封じ込める。
     旧形式の利用者は素材を一緒に選べば従来どおり開ける。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     legacy_dir = tmp_path / "legacy"
     legacy_dir.mkdir()
     doc = ProjectState.new("proj-legacy", "legacy").to_dict()
@@ -218,7 +218,7 @@ def test_open_rejects_absolute_path_outside_allowed_dirs(tmp_path, monkeypatch, 
     回帰: 細工した project.json に /etc/hosts や鍵ファイルの絶対パスを入れて開くと、
     project_dir へコピーされ GET /audio で中身が読めた（QA Critical）。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     secret = tmp_path / "outside" / "id_rsa"
     secret.parent.mkdir(parents=True)
     secret.write_bytes(b"-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n")
@@ -297,7 +297,7 @@ def test_open_relative_paths_already_in_project_dir(tmp_path, monkeypatch, clien
 
 
 def test_open_missing_audio_returns_guiding_400(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     doc = ProjectState.new("proj-missing", "missing").to_dict()
     doc["tracks"]["A"]["normalized_wav"] = "speakerA_source.wav"
     res = client.post(
@@ -312,7 +312,7 @@ def test_open_missing_audio_returns_guiding_400(tmp_path, monkeypatch, client):
 
 def test_open_rejects_traversal_in_track_reference(tmp_path, monkeypatch, client):
     """project.json 内のトラック値で '..' 脱出を狙っても取り込めない（400）。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     outside = tmp_path / "outside"
     outside.mkdir()
     secret = outside / "secret.wav"
@@ -333,7 +333,7 @@ def test_open_rejects_traversal_in_track_reference(tmp_path, monkeypatch, client
 
 def test_open_rejects_symlink_escape_in_track_reference(tmp_path, monkeypatch, client):
     """source_dir 内のシンボリックリンク経由で外部ファイルを取り込めない。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     outside = tmp_path / "outside"
     outside.mkdir()
     secret = outside / "secret.wav"
@@ -360,7 +360,7 @@ def test_open_same_file_for_original_and_normalized(tmp_path, monkeypatch, clien
     なり、フォルダ内の音源はコピーしない。両フィールドは同じ相対参照を保持した
     まま開き、コピー元を自身で上書きする経路は構造的に存在しなくなった。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     sibling = tmp_path / "sibling"
     sibling.mkdir()
     _write_wav(sibling / "shared.wav")
@@ -397,7 +397,7 @@ def test_export_into_project_exports_dir_is_self_consistent(tmp_path, monkeypatc
 
 @pytest.mark.parametrize("bad", ["relative/dir", "not-absolute"])
 def test_open_rejects_non_absolute_source_dir(tmp_path, monkeypatch, client, bad):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     doc = ProjectState.new("proj-sd", "sd").to_dict()
     res = client.post(
         "/api/projects/open",
@@ -408,7 +408,7 @@ def test_open_rejects_non_absolute_source_dir(tmp_path, monkeypatch, client, bad
 
 
 def test_open_rejects_missing_source_dir(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     doc = ProjectState.new("proj-sd2", "sd").to_dict()
     res = client.post(
         "/api/projects/open",
@@ -422,7 +422,7 @@ def test_open_rejects_missing_source_dir(tmp_path, monkeypatch, client):
 
 
 def test_export_targets_without_env_returns_single_entry(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     storage.project_dir("proj-t", create=True)
     res = client.get("/api/export/targets", params={"project_id": "proj-t"})
     assert res.status_code == 200
@@ -433,10 +433,10 @@ def test_export_targets_without_env_returns_single_entry(tmp_path, monkeypatch, 
 
 
 def test_export_targets_with_env_returns_two_entries(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     base = tmp_path / "Podcast" / "exports"
     base.mkdir(parents=True)
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", str(base))
+    monkeypatch.setenv("SEAM_EXPORT_DIR", str(base))
     storage.project_dir("proj-t2", create=True)
     res = client.get("/api/export/targets", params={"project_id": "proj-t2"})
     body = res.json()
@@ -445,7 +445,7 @@ def test_export_targets_with_env_returns_two_entries(tmp_path, monkeypatch, clie
 
 
 def test_export_targets_rejects_bad_project_id(tmp_path, monkeypatch, client):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     res = client.get("/api/export/targets", params={"project_id": "../escape"})
     assert res.status_code == 400
 
@@ -463,7 +463,7 @@ def test_start_export_accepts_absolute_path_inside_configured_base(tmp_path, mon
     project = _make_full_project(tmp_path, monkeypatch, pid="proj-x2")
     base = tmp_path / "Podcast" / "exports"
     base.mkdir(parents=True)
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", str(base))
+    monkeypatch.setenv("SEAM_EXPORT_DIR", str(base))
     captured: dict[str, Path] = {}
 
     def fake_export(project_arg, target, export_format="wav", progress=None, **_kwargs):
@@ -554,7 +554,7 @@ def test_open_without_original_file_succeeds(tmp_path, monkeypatch, client):
     normalized_wav で完結する。ユーザーが正規化WAVだけを選んで開いたときに
     400 で弾かれると実運用の摩擦になるため、参照を落として開く。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     src = tmp_path / "moved"
     src.mkdir()
     _write_wav(src / "speakerA_source.wav", seconds=0.5)
@@ -598,7 +598,7 @@ def test_open_without_original_file_succeeds(tmp_path, monkeypatch, client):
 
 def test_open_without_normalized_wav_is_rejected(tmp_path, monkeypatch, client):
     """normalized_wav は編集・再生・書き出しの実体なので欠けたら 400（誘導メッセージ）。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     src = tmp_path / "moved"
     src.mkdir()
     document = {
@@ -653,7 +653,7 @@ def test_open_with_source_dir_only(tmp_path, monkeypatch, client):
     223MB×2 になるためアップロードは現実的でなく、フォルダのパスを渡して
     サーバ側で直接読む経路を既定にする。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     folder = tmp_path / "exports"
     folder.mkdir()
     _write_wav(folder / "speakerA_source.wav", seconds=0.5)
@@ -683,7 +683,7 @@ def test_open_with_source_dir_only(tmp_path, monkeypatch, client):
 
 def test_open_with_source_dir_missing_project_json(tmp_path, monkeypatch, client):
     """フォルダに project.json が無ければ、そう言って 400。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     empty = tmp_path / "empty"
     empty.mkdir()
     res = client.post("/api/projects/open", data={"source_dir": str(empty)})
@@ -693,7 +693,7 @@ def test_open_with_source_dir_missing_project_json(tmp_path, monkeypatch, client
 
 def test_open_without_anything_is_rejected(tmp_path, monkeypatch, client):
     """project.json もフォルダも無ければ 400（誘導メッセージ）。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     res = client.post("/api/projects/open", data={})
     assert res.status_code == 400
     assert "フォルダのパスを指定" in res.json()["detail"]
@@ -705,7 +705,7 @@ def test_failed_open_leaves_no_empty_project_dir(tmp_path, monkeypatch, client):
     実機で `.podcast_prep/projects/` に中身ゼロのディレクトリが溜まっていた
     （音源が渡らず 400 になった回の残骸）。作成は解決成功後まで遅らせる。
     """
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     doc = {
         "id": "leftoverdir",
         "name": "x",

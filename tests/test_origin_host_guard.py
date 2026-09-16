@@ -8,7 +8,7 @@
 - GET は Origin があっても通り（応答は SOP で読めないため対象外）、
   不正 Host は GET を含む全メソッドで 403（DNS rebinding は応答が読める攻撃）
 
-conftest の `_allow_testclient_host` が PODCAST_PREP_HOST=testserver を入れるので、
+conftest の `_allow_testclient_host` が SEAM_HOST=testserver を入れるので、
 Host 検証を試すテストは monkeypatch で明示的に上書き・削除してから行う。
 """
 
@@ -34,13 +34,13 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _tmp_data(tmp_path, monkeypatch):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
 
 
 @pytest.fixture(autouse=True)
 def _fixed_port(monkeypatch):
-    """開発者シェルの PODCAST_PREP_PORT に依存しないよう既定 4520 に固定する。"""
-    monkeypatch.delenv("PODCAST_PREP_PORT", raising=False)
+    """開発者シェルの SEAM_PORT に依存しないよう既定 4520 に固定する。"""
+    monkeypatch.delenv("SEAM_PORT", raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -140,8 +140,8 @@ def test_get_with_foreign_origin_passes(client):
 
 
 def test_custom_bound_host_origin_is_allowed(client, monkeypatch):
-    """PODCAST_PREP_HOST で別バインドしている場合はそのオリジンも正規扱い。"""
-    monkeypatch.setenv("PODCAST_PREP_HOST", "192.168.10.5")
+    """SEAM_HOST で別バインドしている場合はそのオリジンも正規扱い。"""
+    monkeypatch.setenv("SEAM_HOST", "192.168.10.5")
     # Host も同じバインド先で来る想定
     res = _post_project(
         client,
@@ -156,7 +156,7 @@ def test_custom_bound_host_origin_is_allowed(client, monkeypatch):
 @pytest.fixture
 def _real_host_guard(monkeypatch):
     """conftest の testserver 許可を外し、本番同等（127.0.0.1 バインド）にする。"""
-    monkeypatch.delenv("PODCAST_PREP_HOST", raising=False)
+    monkeypatch.delenv("SEAM_HOST", raising=False)
 
 
 @pytest.mark.usefixtures("_real_host_guard")
@@ -205,8 +205,8 @@ def test_bad_host_blocks_state_change_too(client, tmp_path):
 
 
 def test_bind_all_still_allows_loopback_but_not_wildcard(client, monkeypatch):
-    """PODCAST_PREP_HOST=0.0.0.0（全バインド）でも 0.0.0.0 という Host は許可しない。"""
-    monkeypatch.setenv("PODCAST_PREP_HOST", "0.0.0.0")
+    """SEAM_HOST=0.0.0.0（全バインド）でも 0.0.0.0 という Host は許可しない。"""
+    monkeypatch.setenv("SEAM_HOST", "0.0.0.0")
     ok = client.get("/api/system/paths", headers={"Host": "127.0.0.1:4520"})
     assert ok.status_code == 200
     ng = client.get("/api/system/paths", headers={"Host": "0.0.0.0:4520"})

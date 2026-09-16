@@ -39,7 +39,7 @@ def _isolated_jobs():
 
 
 def _use_tmp_data_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     return tmp_path
 
 
@@ -245,7 +245,7 @@ def test_dir_size_counts_inflight_only_when_requested(tmp_path):
 
 def test_inflight_progress_is_visible_during_download(tmp_path, monkeypatch):
     """.incomplete しか無い段階でも進捗が 0 より大きくなる（ハング誤認の防止）。"""
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     target = transcribe.whisper_model_dir("small")
     (target / ".cache" / "huggingface" / "download").mkdir(parents=True)
     (target / ".cache" / "huggingface" / "download" / "model.bin.incomplete").write_bytes(

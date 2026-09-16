@@ -257,7 +257,7 @@ export async function importFiles(
   const form = new FormData();
   form.append("speaker_a", fileA);
   form.append("speaker_b", fileB);
-  form.append("name", name || "Podcast prep project");
+  form.append("name", name || "Untitled episode");
   form.append("target_lufs", String(targetLufs ?? -16));
   form.append("true_peak", String(loudnorm.truePeak ?? -1.5));
   form.append("tolerance", String(loudnorm.tolerance ?? 0.5));
@@ -298,7 +298,7 @@ export async function openProjectFolder(folderPath) {
   return data.project;
 }
 
-// Issue #18: 書き出し先の選択肢。PODCAST_PREP_EXPORT_DIR 未設定なら
+// Issue #18: 書き出し先の選択肢。SEAM_EXPORT_DIR 未設定なら
 // targets は「プロジェクト内」1件（configured=false）。
 export async function fetchExportTargets(projectId) {
   const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";

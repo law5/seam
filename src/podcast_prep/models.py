@@ -225,7 +225,7 @@ def default_settings() -> dict[str, Any]:
         "vad_aggressiveness": 2,
         "whisper_model": "medium",
         # 計算精度・デバイス（Issue #12）。"auto" 以外を明示設定すると環境変数
-        # （PODCAST_PREP_WHISPER_COMPUTE_TYPE / _DEVICE）より優先される
+        # （SEAM_WHISPER_COMPUTE_TYPE / _DEVICE）より優先される
         # （transcribe.resolve_whisper_runtime）。旧 project.json は from_dict の
         # デフォルトマージで "auto" に補完される（後方互換）。
         "whisper_compute_type": "auto",

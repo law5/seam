@@ -22,7 +22,7 @@ from podcast_prep.models import ProjectState
 
 @pytest.fixture()
 def tmp_data(monkeypatch, tmp_path):
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     registry.reset_cache()
     return tmp_path
 

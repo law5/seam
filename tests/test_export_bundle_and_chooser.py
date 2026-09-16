@@ -51,7 +51,7 @@ def _write_wav(path: Path, seconds: float = 1.0, rate: int = 48000) -> None:
 
 
 def _make_full_project(tmp_path, monkeypatch, pid="proj-bundle") -> ProjectState:
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path / "data"))
     project = ProjectState.new(pid, "bundle test")
     project.status = "ready"
     pdir = storage.project_dir(pid, create=True)
@@ -199,7 +199,7 @@ def test_default_bundle_leaves_existing_readme_untouched(tmp_path, monkeypatch):
 
     export_project(project, outdir)
     assert (outdir / "README.txt").read_text(encoding="utf-8") == mine
-    assert not (outdir / "README_podcast-prep.txt").exists()
+    assert not (outdir / "README_seam.txt").exists()
 
 
 # ---------------------------------------------------------------- API: bundle の受け口
@@ -880,7 +880,7 @@ def test_existing_foreign_readme_is_not_clobbered(tmp_path, monkeypatch):
 
     export_project(project, output_dir=out, export_format="wav", bundle="reeditable")
     assert (out / "README.txt").read_text(encoding="utf-8") == mine
-    assert (out / "README_podcast-prep.txt").is_file()
+    assert (out / "README_seam.txt").is_file()
 
 
 @requires_ffmpeg
@@ -893,7 +893,7 @@ def test_own_readme_is_overwritten_in_place(tmp_path, monkeypatch):
     assert (out / "README.txt").is_file()
 
     export_project(project, output_dir=out, export_format="wav", bundle="reeditable")  # 2回目
-    assert not (out / "README_podcast-prep.txt").exists(), "自前のREADMEを退避してしまった"
+    assert not (out / "README_seam.txt").exists(), "自前のREADMEを退避してしまった"
 
 
 # ------------------------------------------------ QA: 幽霊プロジェクトを作らない
@@ -956,7 +956,7 @@ def test_open_accepts_reeditable_export(tmp_path, monkeypatch, client):
 
 @requires_ffmpeg
 def test_readme_fallback_does_not_clobber_either_file(tmp_path, monkeypatch):
-    """退避先 README_podcast-prep.txt も他人のものなら潰さず採番する（QA再指摘）。
+    """退避先 README_seam.txt も他人のものなら潰さず採番する（QA再指摘）。
 
     「ユーザーのファイルを潰さない」という修正の目的が、退避先だけ無防備だと
     そこで破れる。
@@ -967,12 +967,12 @@ def test_readme_fallback_does_not_clobber_either_file(tmp_path, monkeypatch):
     mine_a = "# ユーザーのメモA\n消すな\n"
     mine_b = "# ユーザーのメモB\nこれも消すな\n"
     (out / "README.txt").write_text(mine_a, encoding="utf-8")
-    (out / "README_podcast-prep.txt").write_text(mine_b, encoding="utf-8")
+    (out / "README_seam.txt").write_text(mine_b, encoding="utf-8")
 
     export_project(project, output_dir=out, export_format="wav", bundle="reeditable")
     assert (out / "README.txt").read_text(encoding="utf-8") == mine_a
-    assert (out / "README_podcast-prep.txt").read_text(encoding="utf-8") == mine_b
-    assert (out / "README_podcast-prep-2.txt").is_file()
+    assert (out / "README_seam.txt").read_text(encoding="utf-8") == mine_b
+    assert (out / "README_seam-2.txt").is_file()
 
 
 @requires_ffmpeg
@@ -1044,10 +1044,10 @@ def test_rejected_open_leaves_no_orphan_directory(tmp_path, monkeypatch, client)
     「コピーが残らないこと」の検証にならない。
     """
     data_dir = tmp_path / "data"
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(data_dir))
     folder = tmp_path / "interrupted"
     folder.mkdir()
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", str(folder))
+    monkeypatch.setenv("SEAM_EXPORT_DIR", str(folder))
 
     project = ProjectState.new("interrupted", "中断")
     project.status = "ready"
@@ -1097,10 +1097,10 @@ def test_open_allows_recoverable_project_without_normalized_wav(tmp_path, monkey
     必ず空にするため。
     """
     data_dir = tmp_path / "data"
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(data_dir))
     folder = tmp_path / "interrupted"
     folder.mkdir()
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", str(folder))
+    monkeypatch.setenv("SEAM_EXPORT_DIR", str(folder))
 
     project = ProjectState.new("interrupted", "中断")
     project.status = "ready"
@@ -1153,10 +1153,10 @@ def test_partial_resolution_failure_writes_nothing(tmp_path, monkeypatch, client
     フェーズ分離そのものを固定する（QA指摘: 両者は別の性質）。
     """
     data_dir = tmp_path / "data"
-    monkeypatch.setenv("PODCAST_PREP_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SEAM_DATA_DIR", str(data_dir))
     folder = tmp_path / "half"
     folder.mkdir()
-    monkeypatch.setenv("PODCAST_PREP_EXPORT_DIR", str(folder))
+    monkeypatch.setenv("SEAM_EXPORT_DIR", str(folder))
 
     project = ProjectState.new("half", "片方だけ実在")
     project.status = "ready"

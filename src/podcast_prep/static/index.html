@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>podcast-prep</title>
+    <title>seam</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <header class="topbar">
       <div class="identity">
-        <span class="app-mark">pp</span>
-        <input id="projectName" class="project-name" value="Podcast prep project" aria-label="プロジェクト名" />
+        <span class="app-mark">s</span>
+        <input id="projectName" class="project-name" value="Untitled episode" aria-label="プロジェクト名" />
       </div>
 
       <div id="jobProgress" class="job-chip" hidden>
@@ -274,7 +274,7 @@
                 <option value="mp3_192">MP3 192k</option>
               </select>
             </label>
-            <!-- Issue #18: PODCAST_PREP_EXPORT_DIR が設定されているときだけ
+            <!-- Issue #18: SEAM_EXPORT_DIR が設定されているときだけ
                  ベース選択のプルダウンを出す（未設定なら hidden のまま。
                  環境変数名は UI に出さない — Issue #32） -->
             <label id="exportBaseRow" hidden>書き出し先
