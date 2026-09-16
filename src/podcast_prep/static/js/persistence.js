@@ -294,8 +294,56 @@ export async function openProjectFolder(folderPath) {
   const form = new FormData();
   form.append("source_dir", folderPath);
   const data = await api("/api/projects/open", { method: "POST", body: form });
+  // Issue #22: アーカイブ済みプロジェクトはサーバが復元ジョブ（kind "restore"）を
+  // 起票して restore_job を添えて返す。中間WAVが実在しないうちに採用すると
+  // 再生準備（wavMeta 取得）が 404 で落ちるため、ジョブ完了の result.project を
+  // 待ってから採用する。進捗は job-progress（topbar のジョブチップ）へ中継し、
+  // beginJob/endJob で復元中の他ジョブ起票（取込等）を既存の isJobBusy ガードで塞ぐ。
+  if (data.restore_job) {
+    beginJob();
+    try {
+      const jobProjectName = data.project?.name;
+      const job = await pollJob(data.restore_job, (j) => emitJobProgress(j, jobProjectName));
+      const project = job.result?.project || data.project;
+      adoptServerProject(project);
+      return project;
+    } finally {
+      endJob();
+    }
+  }
   adoptServerProject(data.project);
   return data.project;
+}
+
+// Issue #22: アーカイブ可否（純関数・テスト対象）。両トラックに元音源と中間WAVの
+// 参照が揃っていて、未アーカイブのときだけ可（サーバ側 /archive の前提条件と対応。
+// UI はこれで disabled を決め、最終ガードはサーバの 400）。
+export function canArchiveProject(project) {
+  if (!project || project.archived) return false;
+  return ["A", "B"].every((speaker) => {
+    const track = project.tracks?.[speaker];
+    return Boolean(track?.original_file) && Boolean(track?.normalized_wav);
+  });
+}
+
+// Issue #22: 削減見込みバイト数（純関数・テスト対象）。中間WAVは 48kHz/16bit/mono
+// PCM 固定（audio.SAMPLE_RATE/SAMPLE_WIDTH/CHANNELS）なので duration から概算できる。
+export function archiveEstimateBytes(project) {
+  return ["A", "B"].reduce((sum, speaker) => {
+    const duration = Number(project?.tracks?.[speaker]?.duration);
+    return sum + (Number.isFinite(duration) && duration > 0 ? duration * 48000 * 2 : 0);
+  }, 0);
+}
+
+// Issue #22: 保存を確定してから POST /archive。応答 {project, freed_bytes} を返す
+// （呼び出し側が freed_bytes をトーストに出し、project を採用してから閉じる）。
+export async function archiveProject() {
+  if (!state.project) throw new Error("プロジェクトがありません");
+  await flushSave();
+  await saveProject(); // 予約が無くても最新状態を確実に PUT してからアーカイブする
+  return api(`/api/projects/${encodeURIComponent(state.project.id)}/archive`, {
+    method: "POST",
+  });
 }
 
 // Issue #18: 書き出し先の選択肢。SEAM_EXPORT_DIR 未設定なら

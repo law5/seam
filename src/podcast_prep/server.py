@@ -28,6 +28,7 @@ from .audio import (
     generate_peak_bins,
     normalize_loudnorm,
     render_preview_segment,
+    wave_info,
 )
 from . import registry
 from .config import APP_NAME, app_host, app_port, data_dir, export_base_dir
@@ -615,6 +616,307 @@ def _run_normalize(
         )
     except Exception as exc:
         _update_job(job_id, status="error", error=str(exc), message="Normalize failed")
+
+
+# ---------------------------------------------------------------- アーカイブ / 復元（Issue #22）
+#
+# 中間WAV speaker{A,B}_normalized.wav は90分素材で約518MB/トラックあり、編集して
+# いない期間のディスク占有が大きい。元音源 + project.json から決定論的に再生成
+# できるため、「アーカイブ（削除）→ 開くとき復元」を提供する。
+#
+# 復元は**取込ではない**: VAD・文字起こし・ピーク生成は再実行しない。
+# project.json の blocks/transcripts と既存の peaks.u8 サイドカーが正のまま、
+# normalized_wav の実体だけを作り直す（_run_normalize と同じ時間軸不変の性質を使う）。
+# 再現条件はアーカイブ時に記録した mode/params スナップショット（models.ProjectState.archived
+# のコメント参照）で、settings の現在値は読まない。防御としてアーカイブ時の
+# WAV 実フレーム数を記録し、復元後に照合する（不一致 = サンプル単位の同一性が
+# 崩れている → normalized_wav を残さずジョブ失敗）。
+
+
+def _archive_restore_speakers(project: ProjectState) -> list[Speaker]:
+    """復元が必要な話者（アーカイブ記録があり normalized_wav が未復元）。"""
+    tracks_meta = (project.archived or {}).get("tracks") or {}
+    return [
+        s
+        for s in SPEAKERS
+        if s in tracks_meta and not project.tracks[s].normalized_wav
+    ]
+
+
+def _restore_track_wav(
+    project: ProjectState, speaker: Speaker, rec: dict[str, Any], job_id: str,
+    *, progress_base: float, progress_span: float,
+) -> Path:
+    """1トラック分の中間WAVをアーカイブ記録から再生成し、フレーム数を照合する。
+
+    失敗時（例外・照合不一致）は部分生成物を必ず削除して normalized_wav を残さない。
+    """
+    track = project.tracks[speaker]
+    try:
+        original = resolve_project_file(project.id, track.original_file)
+    except ValueError:
+        raise AudioProcessingError(
+            f"話者 {speaker} の元音源の参照が不正です: {track.original_file!r}"
+        ) from None
+    if not track.original_file or not original.is_file():
+        raise AudioProcessingError(
+            f"話者 {speaker} の元音源が見つかりません。"
+            "元の音声ファイルを project.json と同じフォルダに置いてから開き直してください"
+        )
+    # 書き込み先は**この話者の**パイプライン固定名のみ。記録の normalized_wav は
+    # 参考情報で、壊れた・細工された記録（他話者の予約名や任意名）に書き込み先を
+    # 動かさせない（QA指摘: RESERVED_UPLOAD_NAMES の集合判定では話者交差を通してしまう）。
+    normalized = project_dir(project.id) / f"speaker{speaker}_normalized.wav"
+    params = rec.get("params") or {}
+
+    def stage_progress(fraction: float) -> None:
+        fraction = max(0.0, min(1.0, fraction))
+        _update_job(
+            job_id,
+            progress=progress_base + progress_span * fraction,
+            message=f"Restoring audio for speaker {speaker} ({fraction:.0%})",
+        )
+
+    try:
+        if rec.get("mode") == "normalized":
+            # アーカイブ時点で loudnorm が実際に適用されていたトラック。
+            # tolerance=0.0 で必ず適用させる（スキップ判定に依存させない —
+            # 「適用された」という事実は mode が既に持っている）。
+            normalize_loudnorm(
+                original,
+                normalized,
+                target_i=float(params.get("target_lufs", -16.0)),
+                true_peak=float(params.get("true_peak", -1.5)),
+                lra=float(params.get("lra", 11.0)),
+                tolerance=0.0,
+                progress=stage_progress,
+            )
+        else:
+            # 変換のみ（normalize=False 取込・tolerance スキップ）のトラック
+            convert_to_pcm(
+                original,
+                normalized,
+                sample_rate=int(params.get("sample_rate", 48000)),
+                progress=stage_progress,
+            )
+        frames = int(wave_info(normalized)["frames"])
+    except BaseException:
+        normalized.unlink(missing_ok=True)
+        raise
+    expected = int(rec.get("samples", -1))
+    if frames != expected:
+        normalized.unlink(missing_ok=True)
+        raise AudioProcessingError(
+            f"復元した音声が記録と一致しません（話者 {speaker}: 記録 {expected} / "
+            f"実測 {frames} サンプル）。ffmpeg のバージョン差などで再現できない"
+            "可能性があります。元音源を含むフォルダを取込からやり直してください"
+        )
+    return normalized
+
+
+def _run_restore(project_id: str, job_id: str) -> None:
+    """アーカイブ済みプロジェクトの中間WAVを元音源から再生成する（復元ジョブ）。"""
+    try:
+        project = load_project(project_id)
+        tracks_meta = (project.archived or {}).get("tracks") or {}
+        speakers = _archive_restore_speakers(project)
+        restored: dict[Speaker, str] = {}
+        span = 1.0 / max(1, len(speakers))
+        for index, speaker in enumerate(speakers):
+            normalized = _restore_track_wav(
+                project,
+                speaker,
+                tracks_meta[speaker],
+                job_id,
+                progress_base=index * span,
+                progress_span=span * 0.95,
+            )
+            restored[speaker] = normalized.name
+        # 保存は最新文書へのマージで行う（_run_normalize と同じ lost update 対策）。
+        # 復元は音声実体の再生成だけなので、blocks/transcripts/loudness には触らない
+        # （アーカイブは track.loudness を消していない = 記録は今も正確）。
+        try:
+            latest = load_project(project_id)
+        except FileNotFoundError:
+            latest = project
+        for speaker, name in restored.items():
+            latest.tracks[speaker].normalized_wav = name
+        latest.archived = None
+        if latest.status == "archived":
+            latest.status = "ready"
+        save_project(latest)
+        _update_job(
+            job_id,
+            progress=1.0,
+            status="complete",
+            message="Restore complete",
+            result={"project": _project_payload(latest)},
+        )
+    except Exception as exc:
+        _update_job(job_id, status="error", error=str(exc), message="Restore failed")
+
+
+def _reject_archived(project: ProjectState) -> None:
+    """アーカイブ済みプロジェクトへのジョブ起票を断る（復元ジョブ自体は対象外）。
+
+    中間WAVが無い状態で文字起こし・後がけ正規化・エクスポートを走らせると、
+    途中失敗や archived 記録との不整合（正規化が normalized_wav を作って記録だけ
+    残る等）を作れるため、起票の入口で一律 400 にする。
+    """
+    if project.archived:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "このプロジェクトはアーカイブ済みです。"
+                "プロジェクトを開いて中間ファイルを復元してからやり直してください"
+            ),
+        )
+
+
+def _archive_params(
+    project: ProjectState, loudness: dict[str, Any], *, applied: bool
+) -> tuple[dict[str, Any], str]:
+    """アーカイブ記録に書く「このWAVを作った条件」と、その出所を返す。
+
+    正は track.loudness に永続化された**実行時の実パラメータ**（audio.normalize_loudnorm /
+    convert_to_pcm が結果 dict に埋める target_i / true_peak / lra / sample_rate）。
+    settings は正規化の**後から**変更され得る（ラウドネスパネルは即保存する）ため、
+    settings を先に読むと「正規化実行 → 設定だけ変更 → アーカイブ → 復元」で
+    復元が変更後の値で loudnorm し、尺不変ゆえサンプル照合もすり抜けて静かに音が変わる。
+
+    実パラメータ記録が無い場合（この記録の導入前に正規化された既存プロジェクト）のみ
+    settings へフォールバックし、その事実を "settings_fallback" として返す（記録に残す）。
+    """
+    settings = project.settings or {}
+    if applied:
+        recorded = all(
+            loudness.get(key) is not None for key in ("target_i", "true_peak", "lra")
+        )
+        source = "loudness" if recorded else "settings_fallback"
+        params = {
+            "target_lufs": float(
+                loudness["target_i"] if recorded else settings.get("target_lufs", -16.0)
+            ),
+            "true_peak": float(
+                loudness["true_peak"] if recorded else settings.get("true_peak", -1.5)
+            ),
+            "lra": float(loudness["lra"] if recorded else settings.get("lra", 11.0)),
+        }
+    else:
+        # 変換のみ: 復元に効くのは sample_rate だけ。他は記録の形を揃えるための参考値
+        recorded = loudness.get("sample_rate") is not None
+        source = "loudness" if recorded else "settings_fallback"
+        params = {
+            "target_lufs": float(settings.get("target_lufs", -16.0)),
+            "true_peak": float(settings.get("true_peak", -1.5)),
+            "lra": float(settings.get("lra", 11.0)),
+        }
+    params["sample_rate"] = int(
+        loudness.get("sample_rate") or settings.get("sample_rate", 48000)
+    )
+    return params, source
+
+
+@app.post("/api/projects/{project_id}/archive")
+def archive_project(project_id: str) -> dict[str, Any]:
+    """中間WAV speaker{A,B}_normalized.wav を削除し、復元用メタを記録する（Issue #22）。
+
+    前提条件（満たさなければ 400・1バイトも変えない）:
+    - 未アーカイブであること
+    - 対象プロジェクトのジョブ（取込・文字起こし・正規化・エクスポート等）が
+      実行中でないこと
+    - 両トラックの original_file と normalized_wav が実在すること
+      （original_file が無いと復元できない = アーカイブは片道切符になる）
+
+    記録 → 保存 → 削除の順（途中でクラッシュしても「記録あり + 実体あり」は
+    復元ジョブの上書き再生成で自己修復する）。応答の freed_bytes は UI 表示用。
+    """
+    project = _load_project_or_404(project_id)
+    if project.archived:
+        raise HTTPException(status_code=400, detail="このプロジェクトは既にアーカイブ済みです")
+    if _has_running_job_for({project_id}):
+        raise HTTPException(
+            status_code=400,
+            detail="このプロジェクトで処理が実行中です。完了を待ってからアーカイブしてください",
+        )
+    targets: dict[Speaker, tuple[Path, dict[str, Any]]] = {}
+    for speaker in SPEAKERS:
+        track = project.tracks[speaker]
+        original_ok = False
+        if track.original_file:
+            try:
+                original_ok = resolve_project_file(project_id, track.original_file).is_file()
+            except ValueError:
+                original_ok = False
+        if not original_ok:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"話者 {speaker} の元音源が見つからないためアーカイブできません。"
+                    "元の音声ファイルが無いと、次に開くとき復元できなくなります"
+                ),
+            )
+        if not track.normalized_wav:
+            raise HTTPException(
+                status_code=400,
+                detail=f"話者 {speaker} に削除対象の中間ファイルがありません",
+            )
+        # 削除対象は**この話者の**パイプライン固定名のみ（復元側 _restore_track_wav の
+        # 名前強制と対称）。normalized_wav が任意名（元音源等）を指す文書で os.remove を
+        # 走らせない — 想定外は 400 で1バイトも変えない。
+        if track.normalized_wav != f"speaker{speaker}_normalized.wav":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"話者 {speaker} の中間ファイルの名前が想定外です"
+                    f"（{track.normalized_wav}）。このプロジェクトはアーカイブできません"
+                ),
+            )
+        wav_path = _resolve_track_file_or_404(
+            project_id,
+            track.normalized_wav,
+            f"話者 {speaker} の中間ファイルが見つかりません",
+        )
+        try:
+            frames = int(wave_info(wav_path)["frames"])
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=f"話者 {speaker} の中間ファイルを WAV として読めませんでした",
+            ) from None
+        loudness = track.loudness or {}
+        # 「正規化を適用したか」の正: track.loudness_normalized（取込・後がけの両経路で
+        # audio.normalize_loudnorm / convert_to_pcm の結果 dict から更新される）。ただし
+        # tolerance によるスキップ（normalization_skipped）は loudness_normalized=True でも
+        # 実体はフィルタなし変換なので "converted" として記録する — 復元時に同じ実体を作るため。
+        applied = bool(track.loudness_normalized) and not loudness.get("normalization_skipped")
+        params, params_source = _archive_params(project, loudness, applied=applied)
+        targets[speaker] = (
+            wav_path,
+            {
+                "normalized_wav": track.normalized_wav,
+                "samples": frames,
+                "mode": "normalized" if applied else "converted",
+                "params": params,
+                "params_source": params_source,
+            },
+        )
+    project.archived = {
+        "archived_at": utc_now_iso(),
+        "tracks": {speaker: rec for speaker, (_path, rec) in targets.items()},
+    }
+    for speaker in SPEAKERS:
+        project.tracks[speaker].normalized_wav = ""
+    project.status = "archived"
+    save_project(project)  # 記録を先に永続化してから実体を消す（途中クラッシュ耐性）
+    freed = 0
+    for wav_path, _rec in targets.values():
+        try:
+            freed += wav_path.stat().st_size
+            os.remove(wav_path)
+        except OSError:
+            continue  # 消せなくても記録は有効（復元ジョブが上書き再生成する）
+    return {"project": _project_payload(project), "freed_bytes": freed}
 
 
 def _run_transcribe(project_id: str, job_id: str, model: str | None) -> None:
@@ -1441,6 +1743,7 @@ def _resolve_open_source_dir(raw: str | None) -> Path | None:
 
 @app.post("/api/projects/open")
 async def open_project(
+    background_tasks: BackgroundTasks,
     project_json: UploadFile | None = File(None),
     source_dir: str | None = Form(None),
     audio: list[UploadFile] | None = File(None),
@@ -1626,6 +1929,21 @@ async def open_project(
             adopted_as_new = True
         try:
             _adopt_track_audio(project, resolved_source_dir, original_id)
+            # アーカイブ済みプロジェクト（Issue #22）: 復元には元音源が必須。
+            # _adopt_track_audio は original_file 不在を「参照を落として開く」で許容する
+            # ため、アーカイブ済みで落ちた場合はここで明示的に断る（開けても再生も
+            # 書き出しもできない幽霊になるだけ）。判定は1バイトも書く前に行う。
+            for speaker in _archive_restore_speakers(project):
+                if not project.tracks[speaker].original_file:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "このプロジェクトはアーカイブ済みですが、"
+                            f"話者 {speaker} の元音源が見つからないため復元できません。"
+                            "元の音声ファイルを project.json と同じフォルダに置いてから"
+                            "開き直してください"
+                        ),
+                    )
             save_project(project)
         except BaseException:
             # 登録後に失敗（音源解決 400 等）したらエントリを残さない
@@ -1648,7 +1966,15 @@ async def open_project(
     if adopted_as_new:
         payload["adopted_as_new_project"] = True
         payload["source_project_id"] = original_id
-    return {"project": payload}
+    response: dict[str, Any] = {"project": payload}
+    # アーカイブ済み（Issue #22）: 開くと同時に復元ジョブを起票する。VAD・文字起こし・
+    # ピーク生成は再実行しない（project.json と peaks.u8 が正のまま）。フロントは
+    # restore_job の完了（result.project）を待ってから採用する。
+    if _archive_restore_speakers(project):
+        restore_job = _new_job("restore", project.id)
+        background_tasks.add_task(_run_restore, project.id, restore_job["id"])
+        response["restore_job"] = restore_job
+    return response
 
 
 def _project_payload(project: ProjectState) -> dict[str, Any]:
@@ -1963,7 +2289,7 @@ def start_transcription(
     background_tasks: BackgroundTasks,
     payload: dict[str, Any] | None = Body(None),
 ) -> dict[str, Any]:
-    _load_project_or_404(project_id)
+    _reject_archived(_load_project_or_404(project_id))  # Issue #22: 復元前のジョブ起票を断る
     payload = payload or {}
     model = payload.get("model")
     job = _new_job("transcribe", project_id)
@@ -1987,6 +2313,7 @@ def start_normalize(
     ブロック（VAD区間）は時間軸不変なので保持する（再VADしない）。
     """
     project = _load_project_or_404(project_id)
+    _reject_archived(project)  # Issue #22: 復元前のジョブ起票を断る
     payload = payload or {}
     raw_speakers = payload.get("speakers")
     if raw_speakers is None:
@@ -2056,7 +2383,7 @@ def start_export(
     background_tasks: BackgroundTasks,
     payload: dict[str, Any] | None = Body(None),
 ) -> dict[str, Any]:
-    _load_project_or_404(project_id)
+    _reject_archived(_load_project_or_404(project_id))  # Issue #22: 復元前のジョブ起票を断る
     payload = payload or {}
     export_format = str(payload.get("format") or "wav").lower()
     # 未知の形式はジョブを作る前に 400（bundle と同じ規律。ジョブ error に倒すと

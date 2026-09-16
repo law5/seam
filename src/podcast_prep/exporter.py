@@ -313,6 +313,13 @@ def export_project(
     # 原因の分かるメッセージをここで出す（QA指摘）。
     missing = [s for s in SPEAKERS if not project.tracks[s].normalized_wav]
     if missing:
+        if project.archived:
+            # Issue #22: アーカイブ済みは「壊れている」のではなく中間WAVを意図して
+            # 削除した状態。復元への導線を出す（エクスポート自体は不可でよい）。
+            raise ValueError(
+                "このプロジェクトはアーカイブ済みです。"
+                "プロジェクトを開いて中間ファイルを復元してから書き出してください"
+            )
         raise ValueError(
             "話者 " + " / ".join(missing) + " の音源がありません。"
             "取込をやり直すか、素材を同梱した書き出しから開き直してください"

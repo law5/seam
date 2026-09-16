@@ -48,6 +48,25 @@
             <button id="discardClose" value="discard" type="submit" class="ghost tiny">編集を破棄して閉じる</button>
             <span class="dialog-discard-note">開いた時点の状態に戻します</span>
           </div>
+          <!-- Issue #22: 中間WAVを削除してディスクを空ける（次回オープン時に元音源から
+               自動復元）。元音源が無い・ジョブ進行中は main が disabled にする -->
+          <div class="dialog-discard">
+            <button id="archiveClose" value="archive" type="submit" class="ghost tiny">アーカイブして閉じる</button>
+            <span class="dialog-discard-note">中間ファイルを削除して容量を空けます</span>
+          </div>
+        </form>
+      </dialog>
+      <!-- Issue #22: アーカイブの確認（confirm-dialog の共通実装。削減見込みサイズは
+           main.onCloseProjectSubmit が textContent で埋める） -->
+      <dialog id="archiveCloseDialog" class="confirm-dialog">
+        <form id="archiveCloseForm" method="dialog">
+          <h2>アーカイブして閉じる</h2>
+          <p class="dialog-note">中間ファイル（約 <span id="archiveSizeMb">--</span> MB）を削除します。<br />
+            次に開くとき元ファイルから復元します（60分素材で数分かかります）</p>
+          <div class="dialog-actions">
+            <button value="no" type="submit" class="ghost">いいえ</button>
+            <button value="yes" type="submit" class="primary">アーカイブする</button>
+          </div>
         </form>
       </dialog>
       <!-- Issue #32: エクスポートの上書き確認（closeProjectDialog と同じ <dialog> 実装。
