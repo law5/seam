@@ -757,6 +757,50 @@ def _run_restore(project_id: str, job_id: str) -> None:
         _update_job(job_id, status="error", error=str(exc), message="Restore failed")
 
 
+def _archive_params(
+    project: ProjectState, loudness: dict[str, Any], *, applied: bool
+) -> tuple[dict[str, Any], str]:
+    """アーカイブ記録に書く「このWAVを作った条件」と、その出所を返す。
+
+    正は track.loudness に永続化された**実行時の実パラメータ**（audio.normalize_loudnorm /
+    convert_to_pcm が結果 dict に埋める target_i / true_peak / lra / sample_rate）。
+    settings は正規化の**後から**変更され得る（ラウドネスパネルは即保存する）ため、
+    settings を先に読むと「正規化実行 → 設定だけ変更 → アーカイブ → 復元」で
+    復元が変更後の値で loudnorm し、尺不変ゆえサンプル照合もすり抜けて静かに音が変わる。
+
+    実パラメータ記録が無い場合（この記録の導入前に正規化された既存プロジェクト）のみ
+    settings へフォールバックし、その事実を "settings_fallback" として返す（記録に残す）。
+    """
+    settings = project.settings or {}
+    if applied:
+        recorded = all(
+            loudness.get(key) is not None for key in ("target_i", "true_peak", "lra")
+        )
+        source = "loudness" if recorded else "settings_fallback"
+        params = {
+            "target_lufs": float(
+                loudness["target_i"] if recorded else settings.get("target_lufs", -16.0)
+            ),
+            "true_peak": float(
+                loudness["true_peak"] if recorded else settings.get("true_peak", -1.5)
+            ),
+            "lra": float(loudness["lra"] if recorded else settings.get("lra", 11.0)),
+        }
+    else:
+        # 変換のみ: 復元に効くのは sample_rate だけ。他は記録の形を揃えるための参考値
+        recorded = loudness.get("sample_rate") is not None
+        source = "loudness" if recorded else "settings_fallback"
+        params = {
+            "target_lufs": float(settings.get("target_lufs", -16.0)),
+            "true_peak": float(settings.get("true_peak", -1.5)),
+            "lra": float(settings.get("lra", 11.0)),
+        }
+    params["sample_rate"] = int(
+        loudness.get("sample_rate") or settings.get("sample_rate", 48000)
+    )
+    return params, source
+
+
 @app.post("/api/projects/{project_id}/archive")
 def archive_project(project_id: str) -> dict[str, Any]:
     """中間WAV speaker{A,B}_normalized.wav を削除し、復元用メタを記録する（Issue #22）。
@@ -819,19 +863,15 @@ def archive_project(project_id: str) -> dict[str, Any]:
         # tolerance によるスキップ（normalization_skipped）は loudness_normalized=True でも
         # 実体はフィルタなし変換なので "converted" として記録する — 復元時に同じ実体を作るため。
         applied = bool(track.loudness_normalized) and not loudness.get("normalization_skipped")
+        params, params_source = _archive_params(project, loudness, applied=applied)
         targets[speaker] = (
             wav_path,
             {
                 "normalized_wav": track.normalized_wav,
                 "samples": frames,
                 "mode": "normalized" if applied else "converted",
-                # アーカイブ時点のWAVを作った条件のスナップショット（復元は settings を読まない）
-                "params": {
-                    "target_lufs": float(project.settings.get("target_lufs", -16.0)),
-                    "true_peak": float(project.settings.get("true_peak", -1.5)),
-                    "lra": float(project.settings.get("lra", 11.0)),
-                    "sample_rate": int(project.settings.get("sample_rate", 48000)),
-                },
+                "params": params,
+                "params_source": params_source,
             },
         )
     project.archived = {

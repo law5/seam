@@ -157,6 +157,89 @@ def test_archive_records_normalized_mode_from_loudness(client):
     assert saved.archived["tracks"]["B"]["mode"] == "converted"
 
 
+def test_archive_params_prefer_loudness_record_over_settings(client):
+    """正規化後に settings を変更してからアーカイブしても、記録される params は
+    正規化実行時の実パラメータ（track.loudness）。settings ドリフトで復元の音が
+    静かに変わる事故（尺不変ゆえサンプル照合をすり抜ける）の恒久対処。"""
+    project = _make_project()
+    project.tracks["A"].loudness_normalized = True
+    project.tracks["A"].loudness = {
+        "target_i": -14.0,
+        "true_peak": -2.0,
+        "lra": 9.0,
+        "sample_rate": 48000,
+        "normalized": {"input_i": "-14.0"},
+        "loudness_normalized": True,
+    }
+    project.tracks["B"].loudness_normalized = True
+    project.tracks["B"].loudness = dict(project.tracks["A"].loudness)
+    # 正規化の後で設定だけ変更された状態を再現
+    project.settings["target_lufs"] = -20.0
+    project.settings["true_peak"] = -0.5
+    project.settings["lra"] = 15.0
+    storage.save_project(project)
+    assert client.post(f"/api/projects/{project.id}/archive").status_code == 200
+    saved = storage.load_project(project.id)
+    for sp in ("A", "B"):
+        rec = saved.archived["tracks"][sp]
+        assert rec["mode"] == "normalized"
+        assert rec["params_source"] == "loudness"
+        assert rec["params"]["target_lufs"] == -14.0
+        assert rec["params"]["true_peak"] == -2.0
+        assert rec["params"]["lra"] == 9.0
+        assert rec["params"]["sample_rate"] == 48000
+
+
+def test_archive_params_settings_fallback_for_legacy_loudness(client):
+    """実パラメータ記録の無い旧プロジェクトのみ settings へフォールバックし、
+    その事実を params_source に残す。"""
+    project = _make_project()
+    project.tracks["A"].loudness_normalized = True
+    project.tracks["A"].loudness = {"normalized": {"input_i": "-16.0"}}  # 旧形式（params 無し）
+    project.settings["target_lufs"] = -18.0
+    storage.save_project(project)
+    assert client.post(f"/api/projects/{project.id}/archive").status_code == 200
+    saved = storage.load_project(project.id)
+    rec_a = saved.archived["tracks"]["A"]
+    assert rec_a["mode"] == "normalized"
+    assert rec_a["params_source"] == "settings_fallback"
+    assert rec_a["params"]["target_lufs"] == -18.0
+    # B は loudness 空の converted（sample_rate 記録も無し）→ 同じく fallback
+    assert saved.archived["tracks"]["B"]["params_source"] == "settings_fallback"
+
+
+def test_restore_uses_archived_params_not_current_settings(tmp_path, monkeypatch, client):
+    """復元は archived.params（正規化実行時の値）で loudnorm する。開く時点の
+    settings（project.json 内で正規化後に変更された値）は読まない。"""
+    folder = _archived_folder(tmp_path / "work", "arch-params")
+    doc = json.loads((folder / "project.json").read_text(encoding="utf-8"))
+    doc["settings"] = {"target_lufs": -20.0, "true_peak": -0.5, "lra": 15.0}
+    for sp in ("A", "B"):
+        doc["archived"]["tracks"][sp]["mode"] = "normalized"
+        doc["archived"]["tracks"][sp]["params"] = {
+            "target_lufs": -14.0, "true_peak": -2.0, "lra": 9.0, "sample_rate": 48000,
+        }
+        doc["tracks"][sp]["loudness_normalized"] = True
+    (folder / "project.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    captured = []
+
+    def fake_loudnorm(original, output, *, target_i, true_peak, lra, tolerance, progress=None):
+        captured.append({"target_i": target_i, "true_peak": true_peak, "lra": lra, "tolerance": tolerance})
+        _write_wav(Path(output), frames=2400)
+        return {"target_i": target_i, "true_peak": true_peak, "lra": lra,
+                "sample_rate": 48000, "loudness_normalized": True}
+
+    monkeypatch.setattr(server, "normalize_loudnorm", fake_loudnorm)
+    res = _open_folder(client, folder)
+    assert res.status_code == 200, res.text
+    job = client.get(f"/api/jobs/{res.json()['restore_job']['id']}").json()
+    assert job["status"] == "complete", job
+    assert len(captured) == 2
+    for kwargs in captured:
+        assert kwargs == {"target_i": -14.0, "true_peak": -2.0, "lra": 9.0, "tolerance": 0.0}
+
+
 # ---------------------------------------------------------------- 「開く」経由の復元
 
 
@@ -317,8 +400,11 @@ def _roundtrip(client, tmp_path, pid: str, *, normalized_mode: bool):
     assert res.status_code == 200, res.text
     pid_actual = res.json()["project"]["id"]
     assert client.post(f"/api/projects/{pid_actual}/archive").status_code == 200
+    archived = storage.load_project(pid_actual).archived
     for sp in ("A", "B"):
         assert not (folder / f"speaker{sp}_normalized.wav").exists()
+        # 実 ffmpeg 経路では実行時パラメータが loudness に記録される → fallback しない
+        assert archived["tracks"][sp]["params_source"] == "loudness"
 
     res2 = _open_folder(client, folder)
     assert res2.status_code == 200, res2.text

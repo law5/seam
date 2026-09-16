@@ -256,6 +256,12 @@ def normalize_loudnorm(
             progress(1.0)
         return {
             "target_i": target_i,
+            # Issue #22: このWAVを作った実パラメータの永続記録（アーカイブ復元が
+            # settings の現在値でなくこちらを読む。スキップ経路は実体がフィルタなし
+            # 変換だが、キー構成は適用経路と揃える）
+            "true_peak": true_peak,
+            "lra": lra,
+            "sample_rate": SAMPLE_RATE,
             "input": measured,
             "normalized": None,  # 適用・検証パスなし
             "loudness_normalized": True,
@@ -305,6 +311,11 @@ def normalize_loudnorm(
         progress(1.0)
     result: dict[str, Any] = {
         "target_i": target_i,
+        # Issue #22: このWAVを作った実パラメータの永続記録（アーカイブ復元用）。
+        # 出力レートは settings ではなく定数 SAMPLE_RATE（-ar に渡している実値）。
+        "true_peak": true_peak,
+        "lra": lra,
+        "sample_rate": SAMPLE_RATE,
         "input": measured,
         "normalized": verified,
         # convert_to_pcm（正規化スキップ）と同じキー構成にして呼び出し側の分岐を減らす。
@@ -368,6 +379,10 @@ def convert_to_pcm(
         progress(1.0)
     return {
         "target_i": None,
+        # Issue #22: このWAVを作った実パラメータの永続記録（アーカイブ復元用）
+        "true_peak": None,
+        "lra": None,
+        "sample_rate": int(sample_rate),
         "input": None,
         "normalized": None,
         "loudness_normalized": False,
