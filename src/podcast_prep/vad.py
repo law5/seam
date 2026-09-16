@@ -113,11 +113,22 @@ def detect_speech_intervals(
             intervals.append((active_start, last_speech_end))
         # 音声の実尺（クランプ上限）。読み取りヘッダの総フレーム数から得る
         total_s = wf.getnframes() / sample_rate
+    # 順序が重要（QA指摘）: min_speech_s の棄却は**パディング前**の実発話長で行う。
+    # 先にパッドすると、従来 min_speech_s=0.2 で棄却されていた 30ms 級の孤立ノイズ
+    # （クリック・息）が既定パッド計 0.25s で嵩上げされて生き残り、ブロック化して
+    # エクスポートに残ってしまう。
+    #   1. 従来どおり merge_intervals（merge_gap 併合 + min_speech 棄却）
+    #   2. 生き残った区間だけをパッド（クランプ付き）
+    #   3. もう一度 merge_intervals へ — ただし min_speech_s=0.0。ここは
+    #      パッドで生じた重なり・橋渡しの吸収専用で、嵩上げ後の長さで
+    #      落とす/残すの再判定はしない
+    intervals = merge_intervals(intervals, merge_gap_s=merge_gap_s, min_speech_s=min_speech_s)
     pad_start_s = max(0.0, float(pad_start_s))
     pad_end_s = max(0.0, float(pad_end_s))
     if pad_start_s > 0.0 or pad_end_s > 0.0:
-        intervals = [
+        padded = [
             (max(0.0, start - pad_start_s), min(total_s, end + pad_end_s))
             for start, end in intervals
         ]
-    return merge_intervals(intervals, merge_gap_s=merge_gap_s, min_speech_s=min_speech_s)
+        intervals = merge_intervals(padded, merge_gap_s=merge_gap_s, min_speech_s=0.0)
+    return intervals

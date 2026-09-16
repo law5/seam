@@ -110,6 +110,27 @@ def test_default_padding_applied(tmp_path):
     assert default[0][1] == pytest.approx(zero[0][1] + 0.2, abs=1e-3)
 
 
+def test_isolated_noise_not_promoted_by_padding(tmp_path):
+    """30ms級の孤立ノイズは min_speech_s=0.2 で棄却され、既定パッド（計 0.25s）で
+    嵩上げされてもブロック化しない（QA指摘: フィルタはパディング前の実発話長で行う）。"""
+    wav = tmp_path / "noise.wav"
+    _write_speech_wav(wav, [(1.0, 1.03)], total_s=3.0)
+    assert vad.detect_speech_intervals(wav, pad_start_s=0.0, pad_end_s=0.0) == []
+    assert vad.detect_speech_intervals(wav) == []  # 既定パッドでも復活しない
+
+
+def test_min_speech_boundary_survives_with_padding(tmp_path):
+    """min_speech_s をちょうど超える実発話はパッド付きで残る。"""
+    wav = tmp_path / "boundary.wav"
+    _write_speech_wav(wav, [(0.5, 0.8)], total_s=3.0)  # 実発話 0.3s ≥ min_speech 0.2
+    base = vad.detect_speech_intervals(wav, pad_start_s=0.0, pad_end_s=0.0)
+    assert len(base) == 1
+    padded = vad.detect_speech_intervals(wav)
+    assert len(padded) == 1
+    assert padded[0][0] == pytest.approx(base[0][0] - 0.05, abs=1e-3)
+    assert padded[0][1] == pytest.approx(base[0][1] + 0.2, abs=1e-3)
+
+
 # ---------------------------------------------------------------- 取込経路の配線
 
 
