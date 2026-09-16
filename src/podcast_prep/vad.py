@@ -28,6 +28,40 @@ def _frame_is_speech_energy(frame: bytes, threshold: float = 0.012) -> bool:
     return _rms(_samples_from_bytes(frame)) >= threshold
 
 
+def energy_threshold_from_db(energy_floor_db: float) -> float:
+    """dBFS → 線形 RMS 閾値（0..1 フルスケール正規化。_rms と同じ座標系）。
+
+    既存フォールバック閾値 0.012 ≒ -38.4dBFS と整合する（10^(-38.4/20) ≈ 0.01202）。
+    """
+    return 10.0 ** (float(energy_floor_db) / 20.0)
+
+
+def frame_is_speech(
+    frame: bytes, vad, sample_rate: int, energy_threshold: float | None
+) -> bool:
+    """1フレームの発話判定（Issue #32 のハイブリッド判定）。
+
+    webrtcvad の aggressiveness は音量のつまみではなく「声らしいスペクトルか」の
+    統計判定の厳しさで、小声・囁きは音量以前に「声らしくない」と落とされる。
+    energy_threshold（vad_energy_floor_db 由来の線形 RMS 値）が指定されたら
+    **webrtcvad OR（RMS ≥ 閾値）** で拾う。
+
+    - webrtcvad あり + 閾値なし: 従来どおり webrtcvad のみ（完全後方互換）
+    - webrtcvad あり + 閾値あり: OR 判定
+    - webrtcvad なし（フォールバック）+ 閾値あり: 既定閾値 0.012 の**代わり**に指定値
+    - webrtcvad なし + 閾値なし: 従来の既定閾値 0.012
+    """
+    if vad is not None:
+        if bool(vad.is_speech(frame, sample_rate)):
+            return True
+        if energy_threshold is None:
+            return False
+        return _rms(_samples_from_bytes(frame)) >= energy_threshold
+    if energy_threshold is not None:
+        return _rms(_samples_from_bytes(frame)) >= energy_threshold
+    return _frame_is_speech_energy(frame)
+
+
 def _load_webrtcvad(aggressiveness: int):
     try:
         import webrtcvad  # type: ignore
@@ -67,6 +101,7 @@ def detect_speech_intervals(
     hangover_s: float = 0.18,
     pad_start_s: float = 0.05,
     pad_end_s: float = 0.2,
+    energy_floor_db: float | None = None,
 ) -> list[tuple[float, float]]:
     """発話区間の検出。
 
@@ -78,8 +113,15 @@ def detect_speech_intervals(
     パディングで生じた重なり・橋渡しはマージが吸収し、同一トラック内で
     区間が重ならない不変条件を保つ。start は 0、end は音声実尺でクランプする。
     webrtcvad 経路とエネルギーフォールバック経路は同じ後処理を通る。
+
+    energy_floor_db（Issue #32）: 無音とみなす音量の下限（dBFS）。None（既定）は
+    従来どおり webrtcvad のみ = 完全後方互換。指定時はフレーム判定が
+    webrtcvad OR（RMS ≥ 10^(db/20)）のハイブリッドになる（frame_is_speech 参照）。
     """
     vad = _load_webrtcvad(aggressiveness)
+    energy_threshold = (
+        None if energy_floor_db is None else energy_threshold_from_db(energy_floor_db)
+    )
     intervals: list[tuple[float, float]] = []
     with wave.open(str(wav_path), "rb") as wf:
         if wf.getnchannels() != 1 or wf.getsampwidth() != SAMPLE_WIDTH:
@@ -97,10 +139,7 @@ def detect_speech_intervals(
             if len(frame) < frame_bytes:
                 break
             timestamp = cursor / sample_rate
-            if vad is not None:
-                speech = bool(vad.is_speech(frame, sample_rate))
-            else:
-                speech = _frame_is_speech_energy(frame)
+            speech = frame_is_speech(frame, vad, sample_rate, energy_threshold)
             if speech:
                 if active_start is None:
                     active_start = timestamp

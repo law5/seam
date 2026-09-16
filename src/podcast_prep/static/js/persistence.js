@@ -267,6 +267,11 @@ export async function importFiles(
   form.append("normalize", normalize ? "true" : "false");
   form.append("vad_aggressiveness", String(vad.aggressiveness ?? 2));
   form.append("vad_pad_end_s", String((vad.padEndMs ?? 200) / 1000));
+  // Issue #32: 音量しきい値（dBFS）。null/undefined = 自動 → フィールド自体を送らない
+  // （サーバ既定 None = webrtcvad のみ。空文字を送ると float パースで 422 になる）
+  if (vad.energyFloorDb != null) {
+    form.append("vad_energy_floor_db", String(vad.energyFloorDb));
+  }
   // 未指定時はフィールド自体を送らない（空文字を送ると「指定されていません」の 400 になる）
   if (workdir) form.append("workdir", workdir);
   // Issue #53: 同意時のみ送る。既定は送らない = サーバ既定 false（既定では破壊できない）

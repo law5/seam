@@ -513,6 +513,12 @@ def _run_import(project_id: str, job_id: str, normalize: bool = True) -> None:
                 # Issue #26: 語尾の息漏れが無音判定で削られないよう区間へ余白を足す
                 pad_start_s=float(project.settings.get("vad_pad_start_s", 0.05)),
                 pad_end_s=float(project.settings.get("vad_pad_end_s", 0.2)),
+                # Issue #32: None = 無効（webrtcvad のみ）。指定時はハイブリッド判定
+                energy_floor_db=(
+                    None
+                    if project.settings.get("vad_energy_floor_db") is None
+                    else float(project.settings["vad_energy_floor_db"])
+                ),
             )
             all_blocks.extend(
                 blocks_from_vad(
@@ -1354,13 +1360,24 @@ def _validate_loudnorm_options(
 
 
 def _validate_vad_options(
-    aggressiveness: int | None, pad_start_s: float | None, pad_end_s: float | None
+    aggressiveness: int | None,
+    pad_start_s: float | None,
+    pad_end_s: float | None,
+    energy_floor_db: float | None = None,
 ) -> None:
-    """無音判定（VAD）設定の範囲チェック（Issue #26。範囲外は 400 に正規化）。
+    """無音判定（VAD）設定の範囲チェック（Issue #26 / #32。範囲外は 400 に正規化）。
 
     aggressiveness は webrtcvad 仕様の 0〜3。pad は 0〜1.0 秒の有限数
     （NaN は比較が False になり弾ける。1秒超の余白は隣接発話を丸ごと飲み込む）。
+    energy_floor_db は None（無効）または -80〜0 dBFS の有限数。
     """
+    if energy_floor_db is not None and not (
+        math.isfinite(energy_floor_db) and -80.0 <= energy_floor_db <= 0.0
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="vad_energy_floor_db は -80〜0 dBFS の範囲で指定してください",
+        )
     if aggressiveness is not None and aggressiveness not in (0, 1, 2, 3):
         raise HTTPException(
             status_code=400, detail="vad_aggressiveness は 0〜3 の整数で指定してください"
@@ -1423,9 +1440,13 @@ async def create_project(
     vad_aggressiveness: int = Form(2),
     vad_pad_start_s: float = Form(0.05),
     vad_pad_end_s: float = Form(0.2),
+    # Issue #32: 無音とみなす音量の下限 dBFS。None = 無効（webrtcvad のみ・従来挙動）
+    vad_energy_floor_db: float | None = Form(None),
 ) -> dict[str, Any]:
     _validate_loudnorm_options(true_peak, tolerance)  # ファイル保存より前に弾く
-    _validate_vad_options(vad_aggressiveness, vad_pad_start_s, vad_pad_end_s)  # 同上
+    _validate_vad_options(
+        vad_aggressiveness, vad_pad_start_s, vad_pad_end_s, vad_energy_floor_db
+    )  # 同上
     project_id = uuid4().hex
     registered = False
     overwrite_root: Path | None = None  # 同意済み上書きの実削除先（ステージング成功後に消す）
@@ -1535,6 +1556,9 @@ async def create_project(
         project.settings["vad_aggressiveness"] = int(vad_aggressiveness)
         project.settings["vad_pad_start_s"] = float(vad_pad_start_s)
         project.settings["vad_pad_end_s"] = float(vad_pad_end_s)
+        project.settings["vad_energy_floor_db"] = (
+            None if vad_energy_floor_db is None else float(vad_energy_floor_db)
+        )
         pdir = project_dir(project_id, create=True)  # 取込 = 書き込み経路
         # 実際にアップロードされた拡張子を尊重する（mp3 だけでなく wav/m4a/flac 等）。
         # 許可外・拡張子なしは話者既定名（speakerX.wav）へ倒す（_safe_audio_name）。

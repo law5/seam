@@ -182,6 +182,12 @@ FLOAT_SETTINGS_KEYS: tuple[str, ...] = (
     "auto_edit_max_overlap_s",
     "auto_edit_keep_overlap_s",
 )
+# None を「無効」として許容する数値キー（Issue #32）。FLOAT_SETTINGS_KEYS に入れると
+# coerce_settings の float(None) が TypeError → ValueError で開けなくなるため別枠にする。
+# 値がある場合のみ float へ型強制し、None はそのまま永続化する（JSON では null）。
+NULLABLE_FLOAT_SETTINGS_KEYS: tuple[str, ...] = (
+    "vad_energy_floor_db",
+)
 INT_SETTINGS_KEYS: tuple[str, ...] = (
     "sample_rate",
     "vad_aggressiveness",
@@ -201,6 +207,12 @@ def coerce_settings(settings: dict[str, Any]) -> dict[str, Any]:
                 settings[key] = float(settings[key])
             except (TypeError, ValueError):
                 raise ValueError(f"settings.{key} must be a number") from None
+    for key in NULLABLE_FLOAT_SETTINGS_KEYS:
+        if key in settings and settings[key] is not None:
+            try:
+                settings[key] = float(settings[key])
+            except (TypeError, ValueError):
+                raise ValueError(f"settings.{key} must be a number or null") from None
     for key in INT_SETTINGS_KEYS:
         if key in settings:
             try:
@@ -229,6 +241,9 @@ def default_settings() -> dict[str, Any]:
         # 旧 project.json は from_dict のデフォルトマージで補完される（後方互換）
         "vad_pad_start_s": 0.05,
         "vad_pad_end_s": 0.2,
+        # 無音とみなす音量の下限 dBFS（Issue #32）。None = 無効（webrtcvad のみ・従来挙動）。
+        # 指定時は webrtcvad OR エネルギー判定のハイブリッド（小声・囁き対策）
+        "vad_energy_floor_db": None,
         "whisper_model": "medium",
         # 計算精度・デバイス（Issue #12）。"auto" 以外を明示設定すると環境変数
         # （SEAM_WHISPER_COMPUTE_TYPE / _DEVICE）より優先される
