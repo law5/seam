@@ -42,6 +42,14 @@
 - **記録 → 保存 → 削除の順序**: `archived` 記録と normalized_wav 参照のクリアを先に永続化してから os.remove。途中クラッシュで「記録あり + 実体あり」になっても、復元ジョブの上書き再生成で自己修復する。
 - **整合**: 幽霊プロジェクト判定は original_file が残るため素通り。エクスポートは normalized_wav 欠損時に `project.archived` を見て「アーカイブ済み。開いて復元」の誘導メッセージに切り替える（exporter.py）。
 
+## 再生ヘッドの2クロック設計（Issue #31）
+
+- **問題**: 再生ヘッドは `posAtStart + (ctx.currentTime - ctxT0)` = 「エンジンに送った時刻」を指しており、`AudioContext.outputLatency`（Bluetooth で 150〜500ms・負荷やデバイス切替で動的に変わる）を補正していなかった。波形上のヘッドと聞こえている声がズレて見える。
+- **設計**: 聴感位置（audiblePosition = エンジン位置 − outputLatency、[0, timelineEnd] クランプ）とエンジン位置（enginePosition = 従来式）の2クロックに分離。`outputLatency` は**都度読む**（キャッシュしない）。undefined/非有限/負は 0 フォールバック。`baseLatency` は含めない（出力経路の遅延の正は outputLatency）。
+- **使い分け**: 公開クロック `getCurrentTime()` は聴感位置（再生ヘッド描画・時刻表示・分割 S・±5s・無音の挿入/削除の基準 — すべてユーザーの耳基準）。エンジン位置は `schedulePass` の先読み窓の起点だけが使う（聴感で取ると実効ルックアヘッドがレイテンシ分縮む）。終了判定（schedulePass / ticker）は聴感位置 — エンジン位置で止めるとレイテンシ分の末尾が尻切れになる。
+- **pause / resume**: `pausedAt` は聴感位置（⏸ でヘッドが指す場所 = 聞こえていた場所）。resume はその値を `posAtStart` にして新規スケジュールするため**エンジン位置への逆変換は不要** — 送信済み・未再生だったレイテンシ分は聞こえていた位置から鳴り直される。編集中の再スケジュール（notifyBlocksChanged）も同じ判断で聴感位置起点。
+- **スコープ**: 表示クロックのみ。fetch 遅延の先頭トリム（scheduleSegment の offsetS）は従来どおり正しく、エクスポート・サーバには影響しない。シーク（絶対時刻指定）にはエンジン/聴感の区別が生じない。
+
 ## 検証
 
 CI（`.github/workflows/ci.yml`）と同じ手順をローカルで実行できる:
