@@ -108,7 +108,7 @@ function subscribe() {
     player.notifyBlocksChanged();
     // topbar のプロジェクト名をモデルへ再同期（activeElement ガードは setInputValue 内）。
     // undo/redo 等でモデルが変わっても入力欄が古い表示のまま乖離するのを防ぐ（QA指摘対応）。
-    setInputValue("projectName", state.project?.name ?? "Podcast prep project");
+    setInputValue("projectName", state.project?.name ?? "Untitled episode");
   });
 
   on("selection-changed", () => waveform.invalidate());
@@ -150,7 +150,7 @@ function bindTopbar() {
 
   $("projectName").addEventListener("input", () => {
     if (!state.project) return;
-    state.project.name = $("projectName").value || "Podcast prep project";
+    state.project.name = $("projectName").value || "Untitled episode";
     persistence.saveSoon();
   });
   // targetLufs はトラック設定パネルの「ラウドネス」欄へ移動 → panels が結線（Issue #37 追加FB）
@@ -594,7 +594,7 @@ async function runImport({ fileA, fileB, workdir = null, overwrite = false } = {
   resetImportProgressView();
   setImportStageLabels(normalize);
   updateImportOverlay();
-  const importName = $("projectName").value || "Podcast prep project";
+  const importName = $("projectName").value || "Untitled episode";
   // Issue #57 QA(High): 「この取込が成功した」ことを finally の畳み判定に渡すローカル変数。
   // module 変数の意図フラグと違いこの呼び出しに閉じているため、裏のジョブ完了が便乗できない。
   let importSucceeded = false;
@@ -822,7 +822,7 @@ function updateTopbarEnabled() {
 // project-set 時の topbar 入力欄同期（編集中の欄は上書きしない — panels と同じ規律）
 function syncTopbarInputs() {
   const project = state.project;
-  setInputValue("projectName", project?.name ?? "Podcast prep project");
+  setInputValue("projectName", project?.name ?? "Untitled episode");
   // targetLufs はトラック設定パネルの「ラウドネス」欄 → panels.syncTrackInputs が同期（Issue #37 追加FB）
   setInputValue("importLufs", project?.settings?.target_lufs ?? -16);
   // Issue #37: ラウドネス詳細（取込オーバーレイ側。パネル側は panels.syncTrackInputs が同期）

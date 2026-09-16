@@ -38,6 +38,26 @@ def test_DNS_rebinding_は拒否する(client_bound_to_all):
     assert r.status_code == 403
 
 
+@pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS", "POST"])
+def test_Hostは全メソッドで検証する(client_bound_to_all, method):
+    """DNS rebinding は応答を読む攻撃なので、GET も検証対象に含める。
+
+    SECURITY.md が「Host はすべてのリクエストで検証」と書いている根拠。
+    ここが安全メソッドを素通しするようになったら文書も直すこと。
+    """
+    r = client_bound_to_all.request(method, "/api/health", headers={"Host": "evil.example.com"})
+    assert r.status_code == 403
+
+
+def test_Originは安全メソッドでは検証しない(client_bound_to_all):
+    """Origin の検証は状態変更系のみ（SECURITY.md の記述と対応）。"""
+    r = client_bound_to_all.get(
+        "/api/health",
+        headers={"Host": "127.0.0.1:4520", "Origin": "https://evil.example.com"},
+    )
+    assert r.status_code == 200
+
+
 def test_LANの実IPを名乗るリクエストは拒否する(client_bound_to_all):
     r = client_bound_to_all.get("/api/health", headers={"Host": "192.168.1.10:4520"})
     assert r.status_code == 403

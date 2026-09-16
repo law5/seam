@@ -1086,7 +1086,7 @@ async def create_project(
     background_tasks: BackgroundTasks,
     speaker_a: UploadFile = File(...),
     speaker_b: UploadFile = File(...),
-    name: str = Form("Podcast prep project"),
+    name: str = Form("Untitled episode"),
     target_lufs: float = Form(-16.0),
     true_peak: float = Form(-1.5),
     tolerance: float = Form(0.5),

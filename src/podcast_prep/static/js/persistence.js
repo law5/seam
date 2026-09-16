@@ -257,7 +257,7 @@ export async function importFiles(
   const form = new FormData();
   form.append("speaker_a", fileA);
   form.append("speaker_b", fileB);
-  form.append("name", name || "Podcast prep project");
+  form.append("name", name || "Untitled episode");
   form.append("target_lufs", String(targetLufs ?? -16));
   form.append("true_peak", String(loudnorm.truePeak ?? -1.5));
   form.append("tolerance", String(loudnorm.tolerance ?? 0.5));

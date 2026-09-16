@@ -199,13 +199,17 @@ def _cleanup_stale_export_files(
             srt.unlink(missing_ok=True)
 
 
-def _readme_destination(output_dir: Path) -> Path:
+def _readme_destination(output_dir: Path) -> Path | None:
     """README の書き込み先。他人のファイルは決して潰さない。
 
     書き出し先にはユーザーが選んだ任意のフォルダ（納品フォルダ等）を指定できるため、
     そこに元からある README.txt を無警告で上書きしない。退避先が既に埋まっている
     場合も同じ判定を繰り返して採番する（退避先だけ無防備だと、守ろうとした性質が
     そこで破れる — QA指摘）。
+
+    候補が全て他人のもので埋まっているときは None を返し、README を書かない。
+    README は再編集バンドルの説明書きであって成果物ではないので、これを置くために
+    他人のファイルを潰す理由がない（以前は最後の候補を無条件で上書きしていた）。
     """
     primary = output_dir / "README.txt"
     if not primary.exists() or _is_own_readme(primary):
@@ -214,9 +218,7 @@ def _readme_destination(output_dir: Path) -> Path:
         candidate = output_dir / f"README_seam{suffix}.txt"
         if not candidate.exists() or _is_own_readme(candidate):
             return candidate
-    # 100個埋まっているのは異常。README のために書き出し全体を落とす筋合いはないので
-    # 最後の候補を使う（この状況では何を選んでも誰かの README を潰す）。
-    return output_dir / "README_seam-99.txt"
+    return None
 
 
 def _readme_text(project: ProjectState, fmt: str, has_srt: bool) -> str:
@@ -425,9 +427,10 @@ def export_project(
         files["project.json"] = str(project_path)
 
         readme_path = _readme_destination(output_dir)
-        readme_path.write_text(
-            _readme_text(project, ext, has_srt="transcript.srt" in files),
-            encoding="utf-8",
-        )
-        files[readme_path.name] = str(readme_path)
+        if readme_path is not None:
+            readme_path.write_text(
+                _readme_text(project, ext, has_srt="transcript.srt" in files),
+                encoding="utf-8",
+            )
+            files[readme_path.name] = str(readme_path)
     return files

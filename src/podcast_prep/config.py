@@ -21,25 +21,44 @@ def env(name: str, default: str = "") -> str:
 
     どちらも未設定・空文字なら default。name はプレフィックスを除いた部分
     （例: "HOST", "WHISPER_LOCAL_ONLY"）。
+
+    空文字を「未設定」と同じに倒すのは新旧そろって適用する。片方だけ素通り
+    させると、`PODCAST_PREP_PORT=""` のような設定を持つ人——つまり互換が
+    必要な人——だけが int("") で起動不能になる（QA指摘）。
     """
     value = os.environ.get(_ENV_PREFIX + name, "").strip()
     if value:
         return value
-    return os.environ.get(_LEGACY_ENV_PREFIX + name, default)
+    return os.environ.get(_LEGACY_ENV_PREFIX + name, "").strip() or default
+
+
+def _holds_data(path: Path) -> bool:
+    """データディレクトリとして実際に使われているか（中身で判定する）。
+
+    存在だけを見ると、空の `.seam` が実データの入った `.podcast_prep` を
+    隠してしまう（削除はされないが、アプリからプロジェクトが消える）。
+    `.DS_Store` 等のゴミ1個で「使用中」と誤判定しないよう、空かどうかでは
+    なくアプリが書くものの有無で見る。
+    """
+    if not path.is_dir():
+        return False
+    if (path / "projects.json").exists():
+        return True
+    return any((path / sub).is_dir() and any((path / sub).iterdir()) for sub in ("models", "projects"))
 
 
 def data_dir() -> Path:
     """Whisperモデルとプロジェクト一覧の置き場所。
 
-    明示指定が無い場合、既定は `./.seam`。ただし旧名 `./.podcast_prep` が
-    既に存在してそちらにデータがある場合は、見失わないようそちらを使う。
+    明示指定が無い場合の既定は `./.seam`。ただし旧名 `./.podcast_prep` に
+    データがあって `./.seam` にはまだ無い場合は、見失わないよう旧側を使う。
+    両方にデータがあるときは新側（明示的に移行した結果とみなす）。
     """
     configured = env("DATA_DIR", "").strip()
     if configured:
         return Path(configured).resolve()
-    legacy = Path(_LEGACY_DATA_DIR)
-    if legacy.is_dir() and not Path(_DEFAULT_DATA_DIR).exists():
-        return legacy.resolve()
+    if _holds_data(Path(_LEGACY_DATA_DIR)) and not _holds_data(Path(_DEFAULT_DATA_DIR)):
+        return Path(_LEGACY_DATA_DIR).resolve()
     return Path(_DEFAULT_DATA_DIR).resolve()
 
 
