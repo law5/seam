@@ -249,9 +249,12 @@ export function adoptBlocksFrom(project) {
 // 同値（-1.5 / 0.5）を常に送る = 挙動不変。
 // overwriteExisting: 作業フォルダの既存プロジェクトを破棄して取り込む明示同意
 // （Issue #53。確認ダイアログで「上書きして取り込む」を選んだ場合のみ true）。
+// vad: 無音判定の設定 {aggressiveness?, padEndMs?}（Issue #26）。未指定はサーバ側既定と
+// 同値（2 / 200ms）を常に送る = 挙動不変（loudnorm と同じ流儀）。頭側の余白
+// vad_pad_start_s は UI に無いため送らない（サーバ既定 0.05s）。
 export async function importFiles(
   fileA, fileB, name, targetLufs, normalize = true, workdir = null, loudnorm = {},
-  overwriteExisting = false,
+  overwriteExisting = false, vad = {},
 ) {
   await flushSave(); // 現プロジェクトの保留編集を切替前に確定（サイレント消失防止）
   const form = new FormData();
@@ -262,6 +265,8 @@ export async function importFiles(
   form.append("true_peak", String(loudnorm.truePeak ?? -1.5));
   form.append("tolerance", String(loudnorm.tolerance ?? 0.5));
   form.append("normalize", normalize ? "true" : "false");
+  form.append("vad_aggressiveness", String(vad.aggressiveness ?? 2));
+  form.append("vad_pad_end_s", String((vad.padEndMs ?? 200) / 1000));
   // 未指定時はフィールド自体を送らない（空文字を送ると「指定されていません」の 400 になる）
   if (workdir) form.append("workdir", workdir);
   // Issue #53: 同意時のみ送る。既定は送らない = サーバ既定 false（既定では破壊できない）

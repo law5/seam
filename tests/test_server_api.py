@@ -564,7 +564,7 @@ def test_run_import_maps_loudnorm_progress_and_writes_peak_sidecar(tmp_path, mon
     monkeypatch.setattr(server, "normalize_loudnorm", fake_normalize)
     monkeypatch.setattr(server, "ffprobe_duration", lambda path: 60.0)
     monkeypatch.setattr(
-        server, "detect_speech_intervals", lambda path, aggressiveness=2: [(0.0, 1.0)]
+        server, "detect_speech_intervals", lambda path, **kwargs: [(0.0, 1.0)]
     )
     monkeypatch.setattr(
         server, "generate_peak_bins", lambda path, bins_per_sec=200: b"PPK1" + b"\x00" * 12
@@ -634,7 +634,7 @@ def _stub_audio_pipeline(monkeypatch, calls):
     monkeypatch.setattr(server, "convert_to_pcm", fake_convert)
     monkeypatch.setattr(server, "ffprobe_duration", lambda path: 60.0)
     monkeypatch.setattr(
-        server, "detect_speech_intervals", lambda path, aggressiveness=2: [(0.0, 1.0)]
+        server, "detect_speech_intervals", lambda path, **kwargs: [(0.0, 1.0)]
     )
     monkeypatch.setattr(
         server, "generate_peak_bins", lambda path, bins_per_sec=200: b"PPK1" + b"\x00" * 12
@@ -700,7 +700,7 @@ def test_import_normalize_false_does_not_change_volume(tmp_path, monkeypatch):
     storage.save_project(project)
     job = server._new_job("import", project.id)
     monkeypatch.setattr(
-        server, "detect_speech_intervals", lambda path, aggressiveness=2: [(0.0, 1.0)]
+        server, "detect_speech_intervals", lambda path, **kwargs: [(0.0, 1.0)]
     )
 
     server._run_import(project.id, job["id"], False)
@@ -1341,7 +1341,7 @@ def test_import_real_wav_runs_full_pipeline_and_builds_blocks(tmp_path, monkeypa
     monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     # VAD だけは合成音の性質に依存しないよう固定（ffmpeg 経路の検証が目的）
     monkeypatch.setattr(
-        server, "detect_speech_intervals", lambda path, aggressiveness=2: [(0.0, 1.0)]
+        server, "detect_speech_intervals", lambda path, **kwargs: [(0.0, 1.0)]
     )
     payload = _wav_bytes(seconds=2.0, rate=48000)
     res = client.post(
@@ -1478,7 +1478,7 @@ def _capture_loudnorm_kwargs(monkeypatch, captured):
     monkeypatch.setattr(server, "normalize_loudnorm", fake_normalize)
     monkeypatch.setattr(server, "ffprobe_duration", lambda path: 60.0)
     monkeypatch.setattr(
-        server, "detect_speech_intervals", lambda path, aggressiveness=2: [(0.0, 1.0)]
+        server, "detect_speech_intervals", lambda path, **kwargs: [(0.0, 1.0)]
     )
     monkeypatch.setattr(
         server, "generate_peak_bins", lambda path, bins_per_sec=200: b"PPK1" + b"\x00" * 12

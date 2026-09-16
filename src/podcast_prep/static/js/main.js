@@ -618,6 +618,11 @@ async function runImport({ fileA, fileB, workdir = null, overwrite = false } = {
       },
       // Issue #53: 確認ダイアログで「上書きして取り込む」を選んだときだけ true
       overwrite,
+      // Issue #26: 無音判定。感度は select（1〜3）、語尾余白は ms（0〜1000 に丸め）
+      {
+        aggressiveness: Number($("importVadSensitivity").value || 2),
+        padEndMs: Math.max(0, Math.min(1000, Number($("importVadPadEnd").value || 200))),
+      },
     );
     importSucceeded = true;
     pendingFiles.A = null;
@@ -884,6 +889,12 @@ function syncTopbarInputs() {
   setInputValue("importTruePeak", project?.settings?.true_peak ?? -1.5);
   setInputValue("importTolerance", project?.settings?.tolerance ?? 0.5);
   setInputValue("exportFormat", project?.settings?.export_format ?? "wav");
+  // Issue #26: 無音判定（取込オーバーレイ側）。pad は settings 秒 → UI ms
+  setInputValue("importVadSensitivity", project?.settings?.vad_aggressiveness ?? 2);
+  setInputValue(
+    "importVadPadEnd",
+    Math.round(((project?.settings?.vad_pad_end_s ?? 0.2) * 1000)),
+  );
   // whisper系の入力欄同期は transcribeSettings が project-set で行う（§K）
 }
 
