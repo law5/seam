@@ -32,6 +32,16 @@
 
 `webrtcvad` を採用。silero-vad は精度面の利点がある一方で torch 依存が重いため、ローカルWebアプリの導入負荷と90分素材の実用速度を優先した。検出・可視化と人間による調整が主目的（自動調整は opt-in の補助）なので、軽量な `webrtcvad` が適切と判断した。
 
+## アーカイブ / 自動復元（Issue #22）の設計判断
+
+- **方式**: 「アーカイブ（中間WAV削除）→ 開くとき復元」。元ファイル直読み化（Issue #15）はスコープ外。
+- **_run_normalize の性質を再利用**: 後がけ正規化が確立した不変条件「元音源 → 中間WAV再生成は時間軸不変・blocks/transcripts/overlaps は保持」をそのまま使う。復元ジョブ（`server._run_restore`）は normalized_wav の実体だけを作り直し、VAD・文字起こし・ピーク生成は再実行しない（peaks.u8 は約1MBなので削除対象外 = 開いた瞬間の波形表示に使う）。保存も `_run_normalize` と同じ「最新文書へのマージ」で lost update を防ぐ。
+- **正規化適用有無の記録**: 正は既存の `track.loudness_normalized`（audio.normalize_loudnorm / convert_to_pcm の結果 dict から取込・後がけの両経路で更新される）。ただし tolerance によるスキップ（`loudness["normalization_skipped"]`）は `loudness_normalized=True` でも実体はフィルタなし変換なので、アーカイブ記録の `mode` は "converted" に倒す。復元時は mode="normalized" なら `tolerance=0.0` で必ず loudnorm を適用（スキップ判定に再依存しない）、"converted" なら `convert_to_pcm`。
+- **再現パラメータのスナップショット**: `archived.tracks[X].params` に target_lufs / true_peak / lra / sample_rate をアーカイブ時点の settings から記録し、復元はこれだけを読む（settings は後から変更され得るため）。既知の限界: 最後の正規化実行**後**に設定パネルでラウドネス値だけ変更して再正規化せずにアーカイブした場合、スナップショットが「WAVを作った条件」とずれ得る。この乖離はサンプル数照合では捕まらない（loudnorm linear は尺を変えない）が、通常フロー（設定変更 → 後がけ正規化 → settings 更新）では一致する。
+- **サンプル数照合**: アーカイブ時に wave の data チャンクのフレーム数を記録し、復元後に照合。不一致（ffmpeg のバージョン差等）は normalized_wav を削除してジョブ失敗（明示的な日本語エラー）。ブロック座標はサンプル位置に依存するため、黙って別の音声で開かせない。
+- **記録 → 保存 → 削除の順序**: `archived` 記録と normalized_wav 参照のクリアを先に永続化してから os.remove。途中クラッシュで「記録あり + 実体あり」になっても、復元ジョブの上書き再生成で自己修復する。
+- **整合**: 幽霊プロジェクト判定は original_file が残るため素通り。エクスポートは normalized_wav 欠損時に `project.archived` を見て「アーカイブ済み。開いて復元」の誘導メッセージに切り替える（exporter.py）。
+
 ## 検証
 
 CI（`.github/workflows/ci.yml`）と同じ手順をローカルで実行できる:

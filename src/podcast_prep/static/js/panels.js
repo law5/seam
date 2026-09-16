@@ -34,6 +34,7 @@ const JOB_KIND_LABELS = {
   transcribe: "文字起こし",
   export: "エクスポート",
   normalize: "ラウドネス正規化",
+  restore: "復元", // Issue #22: アーカイブ済みプロジェクトの中間WAV再生成
   model_download: "モデル取得", // Issue #12: Whisperモデルのダウンロード（契約 §K）
 };
 const $ = (id) => document.getElementById(id);

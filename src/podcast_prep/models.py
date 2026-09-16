@@ -251,8 +251,25 @@ class ProjectState:
     blocks: list[Block] = field(default_factory=list)
     transcripts: list[TranscriptSegment] = field(default_factory=list)
     overlaps: list[Overlap] = field(default_factory=list)
+    # アーカイブ記録（Issue #22）。None = 非アーカイブ。アーカイブ済みは
+    #   {"archived_at": iso8601,
+    #    "tracks": {"A"|"B": {"normalized_wav": 元のファイル名,
+    #                          "samples": WAV実フレーム数（復元後の照合用）,
+    #                          "mode": "normalized" | "converted",
+    #                          "params": {"target_lufs","true_peak","lra","sample_rate"}}}}
+    # を持つ。params は**アーカイブ時点のWAVを作った条件**のスナップショット
+    # （settings は後から変更され得るため、復元時に settings を読み直さない）。
+    # PUT / raw PUT の全量ラウンドトリップで消えないよう to_dict / from_dict の両方が運ぶ。
+    archived: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        data = self._to_dict_base()
+        # 非アーカイブの文書は従来と同一のキー構成を保つ（additive・後方互換）
+        if self.archived:
+            data["archived"] = self.archived
+        return data
+
+    def _to_dict_base(self) -> dict[str, Any]:
         return {
             "schema_version": 1,
             "id": self.id,
@@ -309,6 +326,9 @@ class ProjectState:
             transcripts=[
                 TranscriptSegment.from_dict(item) for item in data.get("transcripts", [])
             ],
+            archived=(
+                data["archived"] if isinstance(data.get("archived"), dict) else None
+            ),
             overlaps=[
                 Overlap(
                     start=_float(item.get("start")),

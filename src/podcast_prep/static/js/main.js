@@ -136,6 +136,11 @@ function bindTopbar() {
     // 上書きしうるため（transcribe の部分採用経路など）。スナップショット不在時も同様。
     const discard = $("discardClose");
     if (discard) discard.disabled = isJobBusy() || !persistence.canDiscard();
+    // Issue #22: 元音源が無い（復元できない）・ジョブ進行中はアーカイブ不可
+    const archive = $("archiveClose");
+    if (archive) {
+      archive.disabled = isJobBusy() || !persistence.canArchiveProject(state.project);
+    }
     $("closeProjectDialog")?.showModal();
   });
   // form の submit を直接拾う（dialog の close/returnValue は
@@ -657,6 +662,35 @@ async function runImport({ fileA, fileB, workdir = null, overwrite = false } = {
 // 閉じた」と誤認させない — はい の保存失敗時と同じ判断）。
 async function onCloseProjectSubmit(event) {
   const choice = event.submitter?.value;
+  if (choice === "archive") {
+    // Issue #22: disabled の二重ガード（ダイアログ表示中にジョブが起票され得る）。
+    // アーカイブ不可の理由はここでトーストに出す（ボタン disabled だけでは伝わらない）。
+    if (isJobBusy()) {
+      toast("ジョブの進行中はアーカイブできません（完了までお待ちください）", 6000);
+      return;
+    }
+    if (!persistence.canArchiveProject(state.project)) {
+      toast("元音源が見つからないためアーカイブできません（復元に元の音声ファイルが必要です）", 8000);
+      return;
+    }
+    const mb = Math.max(1, Math.round(persistence.archiveEstimateBytes(state.project) / (1024 * 1024)));
+    const proceed = await confirmArchiveClose(mb);
+    if (!proceed) return;
+    try {
+      // archiveProject 内で flushSave + saveProject（保存 → アーカイブの順序を保証）
+      const res = await persistence.archiveProject();
+      // サーバの archived 状態（normalized_wav 空・status "archived"）を採用してから
+      // オーバーレイへ戻す。採用しないと autosave PUT が古い normalized_wav 参照を
+      // 書き戻し、復元判定（記録あり + normalized_wav 空）を壊す。
+      if (res?.project) persistence.adoptServerProject(res.project);
+      showImportOverlay();
+      const freedMb = Math.round((Number(res?.freed_bytes) || 0) / (1024 * 1024));
+      toast(`アーカイブしました（約 ${freedMb} MB 削減）。次に開くとき元ファイルから復元します`, 8000);
+    } catch (err) {
+      toast(`アーカイブに失敗しました: ${err.message}`, 8000);
+    }
+    return;
+  }
   if (choice === "discard") {
     if (isJobBusy()) return; // ボタン disabled の二重ガード（採用・saveSoon との交錯防止）
     try {
@@ -744,6 +778,27 @@ async function onTranscribe() {
   } finally {
     endJob();
   }
+}
+
+// Issue #22: アーカイブの確認。confirmExportOverwrite と同じ Promise ラッパー。
+// 削減見込み（概算 MB）は textContent で埋める（XSS規律: innerHTML は使わない）。
+function confirmArchiveClose(estimateMb) {
+  const dialog = $("archiveCloseDialog");
+  const form = $("archiveCloseForm");
+  const size = $("archiveSizeMb");
+  if (size) size.textContent = String(estimateMb);
+  return new Promise((resolve) => {
+    const settle = (yes) => {
+      form.removeEventListener("submit", onSubmit);
+      dialog.removeEventListener("cancel", onCancel);
+      resolve(yes);
+    };
+    const onSubmit = (event) => settle(event.submitter?.value === "yes");
+    const onCancel = () => settle(false);
+    form.addEventListener("submit", onSubmit);
+    dialog.addEventListener("cancel", onCancel);
+    dialog.showModal();
+  });
 }
 
 // Issue #32: 上書き確認。closeProjectDialog と同じ <dialog> を Promise で包む
