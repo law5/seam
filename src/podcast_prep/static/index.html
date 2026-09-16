@@ -433,6 +433,16 @@
                   語尾の余白（ms）
                   <input id="importVadPadEnd" type="number" min="0" max="1000" step="10" value="200" />
                 </label>
+                <!-- Issue #32: 音量しきい値のハイブリッド判定。既定は自動（webrtcvad のみ） -->
+                <label class="opt-row">
+                  <input id="importVadEnergyAuto" type="checkbox" checked />
+                  無音とみなす音量: 自動（webrtcvad 任せ）
+                </label>
+                <label id="importVadEnergyLabel" class="opt-row compact disabled" title="この音量（dBFS）以上のフレームは、声らしくなくても発話として拾います">
+                  しきい値（dBFS）
+                  <input id="importVadEnergyDb" type="number" min="-80" max="0" step="1" value="-50" disabled />
+                </label>
+                <p class="opt-note">下げるほど小さな声を拾いますが、環境ノイズも拾いやすくなります</p>
               </div>
             </details>
           </section>

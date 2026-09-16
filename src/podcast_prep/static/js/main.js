@@ -236,6 +236,10 @@ function bindImportOverlay() {
   bindImportLoudnormOption("importTolerance", "normTolerance", "tolerance", 0.5);
   renderNormalizeToggle();
 
+  // Issue #32: 音量しきい値。「自動」チェックONで dB 入力を無効化（renderNormalizeToggle と同じ流儀）
+  $("importVadEnergyAuto").addEventListener("change", renderVadEnergyToggle);
+  renderVadEnergyToggle();
+
   // 作業フォルダの選択（ネイティブダイアログ。POST /api/system/choose_folder）
   $("importWorkdirChoose").addEventListener("click", async () => {
     const button = $("importWorkdirChoose");
@@ -324,6 +328,14 @@ function renderNormalizeToggle() {
     $(id).classList.toggle("disabled", !on);
   }
   $("importNormalizeNote").hidden = on;
+}
+
+// Issue #32: 「自動」= webrtcvad 任せ（energy_floor_db を送らない）。
+// チェックを外したときだけ dB 入力を有効化する
+function renderVadEnergyToggle() {
+  const auto = !!$("importVadEnergyAuto").checked;
+  $("importVadEnergyDb").disabled = auto;
+  $("importVadEnergyLabel").classList.toggle("disabled", auto);
 }
 
 // 段階リストの第1段は normalize の有無で意味が変わる（正規化 or 単なる変換）
@@ -622,6 +634,10 @@ async function runImport({ fileA, fileB, workdir = null, overwrite = false } = {
       {
         aggressiveness: Number($("importVadSensitivity").value || 2),
         padEndMs: Math.max(0, Math.min(1000, Number($("importVadPadEnd").value || 200))),
+        // Issue #32: 自動（既定）は null = 送らない（サーバ既定 None = webrtcvad のみ）
+        energyFloorDb: $("importVadEnergyAuto").checked
+          ? null
+          : Math.max(-80, Math.min(0, Number($("importVadEnergyDb").value || -50))),
       },
     );
     importSucceeded = true;
@@ -895,6 +911,14 @@ function syncTopbarInputs() {
     "importVadPadEnd",
     Math.round(((project?.settings?.vad_pad_end_s ?? 0.2) * 1000)),
   );
+  // Issue #32: 音量しきい値。null = 自動（チェックON・dB入力は既定値のまま）
+  const floorDb = project?.settings?.vad_energy_floor_db;
+  const autoBox = $("importVadEnergyAuto");
+  if (autoBox && autoBox !== document.activeElement) {
+    autoBox.checked = floorDb == null;
+    renderVadEnergyToggle();
+  }
+  if (floorDb != null) setInputValue("importVadEnergyDb", floorDb);
   // whisper系の入力欄同期は transcribeSettings が project-set で行う（§K）
 }
 
