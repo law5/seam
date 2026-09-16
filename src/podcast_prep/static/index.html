@@ -414,6 +414,26 @@
                 <p id="importNormalizeNote" class="opt-note" hidden>音量を調整し取り込むため、チェックすると時間がかかります。後からトラック設定でかけられます。</p>
               </div>
             </details>
+            <!-- Issue #26: 無音判定（VAD）の調整。語尾の息漏れが無音扱いで削られる
+                 実機フィードバックへの対処。頭側の余白（vad_pad_start_s）は UI に
+                 出さない（settings / API のみ） -->
+            <details class="import-advanced">
+              <summary>詳細設定（無音判定）</summary>
+              <div class="import-options">
+                <label class="opt-row compact" title="高いほど無音判定が厳しくなり、静かな語尾ほど削られやすくなります">
+                  感度
+                  <select id="importVadSensitivity">
+                    <option value="1">低</option>
+                    <option value="2" selected>標準</option>
+                    <option value="3">高</option>
+                  </select>
+                </label>
+                <label class="opt-row compact" title="検出した発話の末尾に足す余白。語尾が削られる場合は増やしてください">
+                  語尾の余白（ms）
+                  <input id="importVadPadEnd" type="number" min="0" max="1000" step="10" value="200" />
+                </label>
+              </div>
+            </details>
           </section>
           <section class="import-section import-section-resume" aria-labelledby="importSectionResume">
             <h2 id="importSectionResume" class="import-section-title">以前の作業を続ける</h2>

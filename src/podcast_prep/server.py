@@ -510,6 +510,9 @@ def _run_import(project_id: str, job_id: str, normalize: bool = True) -> None:
             intervals = detect_speech_intervals(
                 normalized,
                 aggressiveness=int(project.settings.get("vad_aggressiveness", 2)),
+                # Issue #26: 語尾の息漏れが無音判定で削られないよう区間へ余白を足す
+                pad_start_s=float(project.settings.get("vad_pad_start_s", 0.05)),
+                pad_end_s=float(project.settings.get("vad_pad_end_s", 0.2)),
             )
             all_blocks.extend(
                 blocks_from_vad(
@@ -1350,6 +1353,25 @@ def _validate_loudnorm_options(
         )
 
 
+def _validate_vad_options(
+    aggressiveness: int | None, pad_start_s: float | None, pad_end_s: float | None
+) -> None:
+    """無音判定（VAD）設定の範囲チェック（Issue #26。範囲外は 400 に正規化）。
+
+    aggressiveness は webrtcvad 仕様の 0〜3。pad は 0〜1.0 秒の有限数
+    （NaN は比較が False になり弾ける。1秒超の余白は隣接発話を丸ごと飲み込む）。
+    """
+    if aggressiveness is not None and aggressiveness not in (0, 1, 2, 3):
+        raise HTTPException(
+            status_code=400, detail="vad_aggressiveness は 0〜3 の整数で指定してください"
+        )
+    for name, value in (("vad_pad_start_s", pad_start_s), ("vad_pad_end_s", pad_end_s)):
+        if value is not None and not (math.isfinite(value) and 0.0 <= value <= 1.0):
+            raise HTTPException(
+                status_code=400, detail=f"{name} は 0〜1.0 秒の範囲で指定してください"
+            )
+
+
 def _reject_workdir_inside_data_dir(resolved_root: Path) -> None:
     """作業フォルダとしての data_dir 配下指定を 400 で拒否する（create / precheck 共有）。
 
@@ -1396,8 +1418,14 @@ async def create_project(
     normalize: bool = Form(False),
     workdir: str | None = Form(None),
     overwrite_existing: bool = Form(False),
+    # Issue #26: 無音判定の設定（既定は従来挙動 + 語尾余白 0.2s / 頭余白 0.05s）。
+    # ラウドネス系（target_lufs 等）と同じ流儀: Form で受けて settings に保存する
+    vad_aggressiveness: int = Form(2),
+    vad_pad_start_s: float = Form(0.05),
+    vad_pad_end_s: float = Form(0.2),
 ) -> dict[str, Any]:
     _validate_loudnorm_options(true_peak, tolerance)  # ファイル保存より前に弾く
+    _validate_vad_options(vad_aggressiveness, vad_pad_start_s, vad_pad_end_s)  # 同上
     project_id = uuid4().hex
     registered = False
     overwrite_root: Path | None = None  # 同意済み上書きの実削除先（ステージング成功後に消す）
@@ -1504,6 +1532,9 @@ async def create_project(
         project.settings["target_lufs"] = float(target_lufs)
         project.settings["true_peak"] = float(true_peak)
         project.settings["tolerance"] = float(tolerance)
+        project.settings["vad_aggressiveness"] = int(vad_aggressiveness)
+        project.settings["vad_pad_start_s"] = float(vad_pad_start_s)
+        project.settings["vad_pad_end_s"] = float(vad_pad_end_s)
         pdir = project_dir(project_id, create=True)  # 取込 = 書き込み経路
         # 実際にアップロードされた拡張子を尊重する（mp3 だけでなく wav/m4a/flac 等）。
         # 許可外・拡張子なしは話者既定名（speakerX.wav）へ倒す（_safe_audio_name）。

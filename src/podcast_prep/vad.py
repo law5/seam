@@ -65,7 +65,20 @@ def detect_speech_intervals(
     min_speech_s: float = 0.2,
     merge_gap_s: float = 0.25,
     hangover_s: float = 0.18,
+    pad_start_s: float = 0.05,
+    pad_end_s: float = 0.2,
 ) -> list[tuple[float, float]]:
+    """発話区間の検出。
+
+    pad_start_s / pad_end_s（Issue #26）: 検出区間の頭・末尾に足す余白。
+    webrtcvad の終端は「最後に声と判定したフレーム」ぴったりで、息漏れ気味の
+    語尾（日本語で顕著）が aggressiveness=2 でも無音扱いされて削られる。
+    ブロック外はエクスポートで無音化されるため、余白ゼロは納品物から語尾が
+    消える実害になる。パディングは merge_intervals の**前**に適用する —
+    パディングで生じた重なり・橋渡しはマージが吸収し、同一トラック内で
+    区間が重ならない不変条件を保つ。start は 0、end は音声実尺でクランプする。
+    webrtcvad 経路とエネルギーフォールバック経路は同じ後処理を通る。
+    """
     vad = _load_webrtcvad(aggressiveness)
     intervals: list[tuple[float, float]] = []
     with wave.open(str(wav_path), "rb") as wf:
@@ -98,4 +111,13 @@ def detect_speech_intervals(
             cursor += frame_frames
         if active_start is not None:
             intervals.append((active_start, last_speech_end))
+        # 音声の実尺（クランプ上限）。読み取りヘッダの総フレーム数から得る
+        total_s = wf.getnframes() / sample_rate
+    pad_start_s = max(0.0, float(pad_start_s))
+    pad_end_s = max(0.0, float(pad_end_s))
+    if pad_start_s > 0.0 or pad_end_s > 0.0:
+        intervals = [
+            (max(0.0, start - pad_start_s), min(total_s, end + pad_end_s))
+            for start, end in intervals
+        ]
     return merge_intervals(intervals, merge_gap_s=merge_gap_s, min_speech_s=min_speech_s)

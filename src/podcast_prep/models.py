@@ -175,6 +175,8 @@ FLOAT_SETTINGS_KEYS: tuple[str, ...] = (
     "tolerance",
     "min_overlap_s",
     "crossfade_ms",
+    "vad_pad_start_s",
+    "vad_pad_end_s",
     "auto_edit_max_gap_s",
     "auto_edit_keep_gap_s",
     "auto_edit_max_overlap_s",
@@ -223,6 +225,10 @@ def default_settings() -> dict[str, Any]:
         "crossfade_ms": 10.0,
         "sample_rate": 48000,
         "vad_aggressiveness": 2,
+        # VAD区間の頭・末尾パディング（Issue #26。語尾の息漏れ削れ対策）。
+        # 旧 project.json は from_dict のデフォルトマージで補完される（後方互換）
+        "vad_pad_start_s": 0.05,
+        "vad_pad_end_s": 0.2,
         "whisper_model": "medium",
         # 計算精度・デバイス（Issue #12）。"auto" 以外を明示設定すると環境変数
         # （SEAM_WHISPER_COMPUTE_TYPE / _DEVICE）より優先される
