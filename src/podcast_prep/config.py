@@ -44,7 +44,12 @@ def _holds_data(path: Path) -> bool:
         return False
     if (path / "projects.json").exists():
         return True
-    return any((path / sub).is_dir() and any((path / sub).iterdir()) for sub in ("models", "projects"))
+    # models/ と projects/ は「中身があるか」ではなく実体の有無で見る。
+    # iterdir 判定だと models/.DS_Store や projects/ 配下の空ディレクトリ1個で
+    # 「使用中」と誤判定し、実データ入りの旧側が再び隠れる（QA指摘の残エッジ）。
+    if any((path / "models").glob("*/model.bin")):
+        return True
+    return any((path / "projects").glob("*/project.json"))
 
 
 def data_dir() -> Path:

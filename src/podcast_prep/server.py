@@ -1090,7 +1090,8 @@ async def create_project(
     target_lufs: float = Form(-16.0),
     true_peak: float = Form(-1.5),
     tolerance: float = Form(0.5),
-    normalize: bool = Form(True),
+    # UI は常に明示送信する。API 直叩きの省略時も UI の既定（OFF）と揃える
+    normalize: bool = Form(False),
     workdir: str | None = Form(None),
     overwrite_existing: bool = Form(False),
 ) -> dict[str, Any]:

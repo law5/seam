@@ -127,6 +127,26 @@ def test_モデルだけでも使用中と見なす(fresh_config, monkeypatch, t
     assert fresh_config.data_dir() == (tmp_path / ".podcast_prep").resolve()
 
 
+def test_modelsのゴミだけでは使用中にしない(fresh_config, monkeypatch, tmp_path):
+    """`.seam/models/.DS_Store`（Finderで開くだけで生成）が実データを隠さない。
+
+    iterdir 判定への退行を検出する（QA指摘の残エッジ）。
+    """
+    monkeypatch.chdir(tmp_path)
+    _with_registry(tmp_path / ".podcast_prep")
+    (tmp_path / ".seam" / "models").mkdir(parents=True)
+    (tmp_path / ".seam" / "models" / ".DS_Store").write_text("junk", encoding="utf-8")
+    assert fresh_config.data_dir() == (tmp_path / ".podcast_prep").resolve()
+
+
+def test_projectsの空ディレクトリだけでは使用中にしない(fresh_config, monkeypatch, tmp_path):
+    """project.json を持たない空のオーファンディレクトリで誤判定しない。"""
+    monkeypatch.chdir(tmp_path)
+    _with_registry(tmp_path / ".podcast_prep")
+    (tmp_path / ".seam" / "projects" / "orphan").mkdir(parents=True)
+    assert fresh_config.data_dir() == (tmp_path / ".podcast_prep").resolve()
+
+
 def test_ゴミだけの旧ディレクトリは使用中にしない(fresh_config, monkeypatch, tmp_path):
     """`.DS_Store` 1個で「使用中」と誤判定して旧側に居座らない。"""
     monkeypatch.chdir(tmp_path)

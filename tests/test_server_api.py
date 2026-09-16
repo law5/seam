@@ -1500,7 +1500,7 @@ def test_create_project_pipes_true_peak_and_tolerance_to_audio(
             "speaker_a": ("a.wav", payload, "audio/wav"),
             "speaker_b": ("b.wav", payload, "audio/wav"),
         },
-        data={"target_lufs": "-16", "true_peak": "-2.0", "tolerance": "1.0"},
+        data={"normalize": "true", "target_lufs": "-16", "true_peak": "-2.0", "tolerance": "1.0"},
     )
     assert res.status_code == 200, res.text
     saved = storage.load_project(res.json()["project"]["id"])
@@ -1513,7 +1513,34 @@ def test_create_project_pipes_true_peak_and_tolerance_to_audio(
 
 
 def test_create_project_defaults_keep_current_behavior(tmp_path, monkeypatch, client):
-    """フィールド未送信時の既定: true_peak=-1.5（現行固定値）/ tolerance=0.5。"""
+    """ラウドネス項目未送信時の既定: true_peak=-1.5（現行固定値）/ tolerance=0.5。
+
+    normalize は UI 既定（OFF）に合わせて API 既定も False のため、
+    本テストの目的（ラウドネス既定値の検証）には明示 ON で臨む。
+    """
+    monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
+    captured: list[dict] = []
+    _capture_loudnorm_kwargs(monkeypatch, captured)
+
+    payload = _wav_bytes()
+    res = client.post(
+        "/api/projects",
+        files={
+            "speaker_a": ("a.wav", payload, "audio/wav"),
+            "speaker_b": ("b.wav", payload, "audio/wav"),
+        },
+        data={"normalize": "true"},
+    )
+    assert res.status_code == 200, res.text
+    saved = storage.load_project(res.json()["project"]["id"])
+    assert saved.settings["true_peak"] == -1.5
+    assert saved.settings["tolerance"] == 0.5
+    assert captured and all(k["true_peak"] == -1.5 for k in captured)
+    assert all(k["tolerance"] == 0.5 for k in captured)
+
+
+def test_create_project_normalize_defaults_off(tmp_path, monkeypatch, client):
+    """normalize 未送信の API 直叩きは正規化しない（UI 既定 OFF と一致）。"""
     monkeypatch.setenv("SEAM_DATA_DIR", str(tmp_path))
     captured: list[dict] = []
     _capture_loudnorm_kwargs(monkeypatch, captured)
@@ -1527,11 +1554,7 @@ def test_create_project_defaults_keep_current_behavior(tmp_path, monkeypatch, cl
         },
     )
     assert res.status_code == 200, res.text
-    saved = storage.load_project(res.json()["project"]["id"])
-    assert saved.settings["true_peak"] == -1.5
-    assert saved.settings["tolerance"] == 0.5
-    assert captured and all(k["true_peak"] == -1.5 for k in captured)
-    assert all(k["tolerance"] == 0.5 for k in captured)
+    assert captured == []  # loudnorm は呼ばれない
 
 
 @pytest.mark.parametrize(
