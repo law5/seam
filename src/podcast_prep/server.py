@@ -663,11 +663,10 @@ def _restore_track_wav(
             f"話者 {speaker} の元音源が見つかりません。"
             "元の音声ファイルを project.json と同じフォルダに置いてから開き直してください"
         )
-    name = _safe_name(str(rec.get("normalized_wav") or ""), f"speaker{speaker}_normalized.wav")
-    if name not in RESERVED_UPLOAD_NAMES:
-        # 記録が壊れていても書き込み先はパイプライン固定名から出さない
-        name = f"speaker{speaker}_normalized.wav"
-    normalized = project_dir(project.id) / name
+    # 書き込み先は**この話者の**パイプライン固定名のみ。記録の normalized_wav は
+    # 参考情報で、壊れた・細工された記録（他話者の予約名や任意名）に書き込み先を
+    # 動かさせない（QA指摘: RESERVED_UPLOAD_NAMES の集合判定では話者交差を通してしまう）。
+    normalized = project_dir(project.id) / f"speaker{speaker}_normalized.wav"
     params = rec.get("params") or {}
 
     def stage_progress(fraction: float) -> None:
@@ -757,6 +756,23 @@ def _run_restore(project_id: str, job_id: str) -> None:
         _update_job(job_id, status="error", error=str(exc), message="Restore failed")
 
 
+def _reject_archived(project: ProjectState) -> None:
+    """アーカイブ済みプロジェクトへのジョブ起票を断る（復元ジョブ自体は対象外）。
+
+    中間WAVが無い状態で文字起こし・後がけ正規化・エクスポートを走らせると、
+    途中失敗や archived 記録との不整合（正規化が normalized_wav を作って記録だけ
+    残る等）を作れるため、起票の入口で一律 400 にする。
+    """
+    if project.archived:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "このプロジェクトはアーカイブ済みです。"
+                "プロジェクトを開いて中間ファイルを復元してからやり直してください"
+            ),
+        )
+
+
 def _archive_params(
     project: ProjectState, loudness: dict[str, Any], *, applied: bool
 ) -> tuple[dict[str, Any], str]:
@@ -844,6 +860,17 @@ def archive_project(project_id: str) -> dict[str, Any]:
             raise HTTPException(
                 status_code=400,
                 detail=f"話者 {speaker} に削除対象の中間ファイルがありません",
+            )
+        # 削除対象は**この話者の**パイプライン固定名のみ（復元側 _restore_track_wav の
+        # 名前強制と対称）。normalized_wav が任意名（元音源等）を指す文書で os.remove を
+        # 走らせない — 想定外は 400 で1バイトも変えない。
+        if track.normalized_wav != f"speaker{speaker}_normalized.wav":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"話者 {speaker} の中間ファイルの名前が想定外です"
+                    f"（{track.normalized_wav}）。このプロジェクトはアーカイブできません"
+                ),
             )
         wav_path = _resolve_track_file_or_404(
             project_id,
@@ -2262,7 +2289,7 @@ def start_transcription(
     background_tasks: BackgroundTasks,
     payload: dict[str, Any] | None = Body(None),
 ) -> dict[str, Any]:
-    _load_project_or_404(project_id)
+    _reject_archived(_load_project_or_404(project_id))  # Issue #22: 復元前のジョブ起票を断る
     payload = payload or {}
     model = payload.get("model")
     job = _new_job("transcribe", project_id)
@@ -2286,6 +2313,7 @@ def start_normalize(
     ブロック（VAD区間）は時間軸不変なので保持する（再VADしない）。
     """
     project = _load_project_or_404(project_id)
+    _reject_archived(project)  # Issue #22: 復元前のジョブ起票を断る
     payload = payload or {}
     raw_speakers = payload.get("speakers")
     if raw_speakers is None:
@@ -2355,7 +2383,7 @@ def start_export(
     background_tasks: BackgroundTasks,
     payload: dict[str, Any] | None = Body(None),
 ) -> dict[str, Any]:
-    _load_project_or_404(project_id)
+    _reject_archived(_load_project_or_404(project_id))  # Issue #22: 復元前のジョブ起票を断る
     payload = payload or {}
     export_format = str(payload.get("format") or "wav").lower()
     # 未知の形式はジョブを作る前に 400（bundle と同じ規律。ジョブ error に倒すと

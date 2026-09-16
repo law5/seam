@@ -428,6 +428,70 @@ def test_roundtrip_byte_identical_normalized(tmp_path, client):
     _roundtrip(client, tmp_path, "rt-normalized", normalized_mode=True)
 
 
+# ---------------------------------------------------------------- 削除対象名の予約名強制（QA修正1）
+
+
+def test_archive_rejects_unexpected_normalized_name(client):
+    """normalized_wav が話者固定名以外（例: 元音源）を指す文書では os.remove を
+    走らせない — 400 で1バイトも変えない。"""
+    project = _make_project()
+    project.tracks["A"].normalized_wav = "speakerA.wav"  # 元音源を指す細工/破損文書
+    storage.save_project(project)
+    res = client.post(f"/api/projects/{project.id}/archive")
+    assert res.status_code == 400
+    assert "想定外" in res.json()["detail"]
+    pdir = storage.project_dir(project.id)
+    # 元音源も相方の中間WAVも無傷・記録も残らない
+    assert (pdir / "speakerA.wav").is_file()
+    assert (pdir / "speakerB_normalized.wav").is_file()
+    assert storage.load_project(project.id).archived is None
+
+
+def test_restore_forces_per_speaker_fixed_name(tmp_path, monkeypatch, client):
+    """アーカイブ記録が他話者の予約名を指していても、復元先は**その話者の**
+    固定名に矯正される（話者交差の書き込みを許さない）。"""
+    folder = _archived_folder(tmp_path / "work", "arch-crossname")
+    doc = json.loads((folder / "project.json").read_text(encoding="utf-8"))
+    doc["archived"]["tracks"]["A"]["normalized_wav"] = "speakerB_normalized.wav"  # 話者交差
+    (folder / "project.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    written = []
+
+    def fake_convert(original, output, sample_rate=48000, progress=None):
+        written.append(Path(output).name)
+        _write_wav(Path(output), frames=2400)
+        return {"target_i": None, "input": None, "normalized": None, "loudness_normalized": False}
+
+    monkeypatch.setattr(server, "convert_to_pcm", fake_convert)
+    res = _open_folder(client, folder)
+    assert res.status_code == 200, res.text
+    job = client.get(f"/api/jobs/{res.json()['restore_job']['id']}").json()
+    assert job["status"] == "complete", job
+    assert sorted(written) == ["speakerA_normalized.wav", "speakerB_normalized.wav"]
+    saved = storage.load_project(res.json()["project"]["id"])
+    assert saved.tracks["A"].normalized_wav == "speakerA_normalized.wav"
+
+
+# ---------------------------------------------------------------- archived 状態の強制（QA修正2）
+
+
+@pytest.mark.parametrize(
+    "url,payload",
+    [
+        ("/api/projects/{pid}/transcribe", {}),
+        ("/api/projects/{pid}/normalize", {}),
+        ("/api/projects/{pid}/export", {"format": "wav"}),
+    ],
+)
+def test_archived_project_rejects_job_start(client, url, payload):
+    project = _make_project(pid="arch-guard")
+    assert client.post(f"/api/projects/{project.id}/archive").status_code == 200
+    res = client.post(url.format(pid=project.id), json=payload)
+    assert res.status_code == 400
+    assert "アーカイブ済み" in res.json()["detail"]
+    assert "復元" in res.json()["detail"]
+
+
 # ---------------------------------------------------------------- エクスポート拒否
 
 
