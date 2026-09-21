@@ -3,6 +3,10 @@
 // - autoEdit.parseThresholdInput / thresholdValueToPersist
 //   （Issue #36: 空入力・不正値を settings へ永続化しない。妥当性判定は
 //    validateAutoEditThresholds に委ね、ルールの定義箇所を増やさない）
+// - autoEdit.validateAutoEditThresholds の空欄検証
+//   （Issue #37: 空欄が Number("") === 0 で素通りし、無音が全削除されていた。
+//    読み取りを parseThresholdInput に統一。赤字表示と送信ゲートは同じ
+//    errors 配列を見るので、この関数を直せば両方が同時に直る）
 // - autoEdit.shouldConfirmOverlapReset / overlapResetChoice / awaitOverlapResetChoice
 //   （Issue #36: チェック編集後のプレビュー確認ダイアログの条件と Promise 契約）
 // - transcriptPanel._findRowAt（現在行の二分探索 + 有界後方走査）
@@ -128,12 +132,144 @@ test("validateAutoEditThresholds: 非数と複数エラーの同時報告・min_
     undefined,
   );
   assert.deepStrictEqual(errors.map((e) => e.field), ["maxGap", "keepGap", "maxOv"]);
-  // 空文字は Number("") === 0 なので数値として扱われる（サーバ float() と同じ着地）
-  const empty = validateAutoEditThresholds(
+});
+
+// ── Issue #37: 空のギャップ欄が検証を素通りし、無音が全削除される ──
+//
+// 旧実装は各欄を `Number(opts?.max_gap_s)` で読んでいたため `Number("") === 0` が
+// Number.isFinite を通過し、**空欄が「0 という妥当な入力」として素通り**していた。
+// サーバの検証式（keep_gap < 0 / max_gap < keep_gap / max_ov < min_ov）は 0/0 を
+// 合法として通すので、detect_silence_gaps(min_gap_s=0) が**すべての無音ギャップ**を
+// 検出して詰める = 無警告で最も破壊的な編集が走っていた。
+// 修正: 読み取りを parseThresholdInput に統一し、空欄は「未入力」エラーにする。
+
+test("validateAutoEditThresholds: 空欄は 0 ではなく未入力エラー（#37 の本丸）", () => {
+  // QA 実測の再現ケース: keep_gap だけ空 → 旧実装は errors: [] で素通りしていた
+  assert.deepStrictEqual(
+    validateAutoEditThresholds({ max_gap_s: "1.5", keep_gap_s: "", max_overlap_s: "3" }, 0.3).map(
+      (e) => e.field,
+    ),
+    ["keepGap"],
+  );
+  // max_gap と keep_gap の両方が空 → 旧実装は 0/0 を送信し全無音を詰めていた
+  assert.deepStrictEqual(
+    validateAutoEditThresholds({ max_gap_s: "", keep_gap_s: "", max_overlap_s: "3" }, 0.3).map(
+      (e) => e.field,
+    ),
+    ["maxGap", "keepGap"],
+  );
+});
+
+test("validateAutoEditThresholds: 空文字・空白のみ・非数値が3欄それぞれでエラーになる", () => {
+  const OK_RAW = { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "3" };
+  const fields = [
+    ["max_gap_s", "maxGap"],
+    ["keep_gap_s", "keepGap"],
+    ["max_overlap_s", "maxOv"],
+  ];
+  for (const [key, field] of fields) {
+    for (const raw of ["", " ", "\t\n", "abc", "1.2.3", "3s", null, undefined]) {
+      const errors = validateAutoEditThresholds({ ...OK_RAW, [key]: raw }, 0.3);
+      assert.ok(
+        errors.some((e) => e.field === field),
+        `${key}=${JSON.stringify(raw)} は ${field} のエラーになるべき`,
+      );
+      assert.match(
+        errors.find((e) => e.field === field).message,
+        /数値を入力してください/,
+        `${key}=${JSON.stringify(raw)} は「数値未入力」の文言`,
+      );
+    }
+  }
+});
+
+test("validateAutoEditThresholds: 明示的な 0 は従来どおり通す（#37 で 0 の妥当性は変えない）", () => {
+  // max_gap_s=0 + keep_gap_s=0 は現状のサーバ検証式でも合法。空欄だけを塞ぐ修正で
+  // この挙動を壊さない（0 の妥当性そのものはサーバ側の別論点 = Issue 報告事項）。
+  assert.deepStrictEqual(
+    validateAutoEditThresholds({ max_gap_s: "0", keep_gap_s: "0", max_overlap_s: "3" }, 0.3),
+    [],
+  );
+  assert.deepStrictEqual(
+    validateAutoEditThresholds({ max_gap_s: 0, keep_gap_s: 0, max_overlap_s: 3 }, 0.3),
+    [],
+  );
+  // 0 は「空」と違って keep_gap の 0 以上チェックも通る
+  assert.deepStrictEqual(
+    validateAutoEditThresholds({ max_gap_s: "1.5", keep_gap_s: "0", max_overlap_s: "3" }, 0.3),
+    [],
+  );
+});
+
+test("validateAutoEditThresholds: 組み合わせエラーは空文字混じりでは出さない（#37）", () => {
+  // max_gap < keep_gap の判定は両方が数値のときだけ。空欄を 0 とみなして
+  // 「0 < 0.5 → 判定超過」という**誤った理由**の赤字を出すと、ユーザーは
+  // 空欄が原因だと気づけない。空欄は空欄として報告する。
+  const emptyMax = validateAutoEditThresholds(
     { max_gap_s: "", keep_gap_s: "0.5", max_overlap_s: "3" },
     0.3,
   );
-  assert.deepStrictEqual(empty.map((e) => e.field), ["keepGap"]); // 0 < 0.5 → 判定超過
+  assert.deepStrictEqual(emptyMax.map((e) => e.field), ["maxGap"]);
+  assert.match(emptyMax[0].message, /「超」の秒数に数値を入力してください/);
+
+  // 両方数値なら従来どおり組み合わせエラーが出る
+  const crossed = validateAutoEditThresholds(
+    { max_gap_s: "0.5", keep_gap_s: "1.0", max_overlap_s: "3" },
+    0.3,
+  );
+  assert.deepStrictEqual(crossed.map((e) => e.field), ["keepGap"]);
+  assert.match(crossed[0].message, /以下にしてください/);
+
+  // keep_gap が空 + max_gap が数値 → keepGap の未入力エラーのみ（重複して出さない）
+  const emptyKeep = validateAutoEditThresholds(
+    { max_gap_s: "1.5", keep_gap_s: "", max_overlap_s: "3" },
+    0.3,
+  );
+  assert.equal(emptyKeep.length, 1, "未入力と組み合わせエラーが二重に出ない");
+});
+
+// 送信ゲート（#37）。renderThresholdErrors はモジュール内部の DOM 関数なので
+// 直接は import できないが、その本体は
+//   errors = validateAutoEditThresholds(入力欄の生値, min_overlap_s);
+//   ... 赤字を描画 ...
+//   return errors.length === 0;   ← プレビュー/適用はこれが false なら return
+// であり、**赤字表示と送信ゲートは同じ errors 配列を読む**。したがって
+// 「空欄で errors が非空になる」ことがそのまま「赤字が出る」かつ
+// 「送信が止まる」の両方を意味する。ここではその不変条件を固定する。
+test("送信ゲート: 空欄は errors 非空 = renderThresholdErrors が false を返す経路（#37）", () => {
+  const gateWouldPass = (inputs, minOv = 0.3) =>
+    validateAutoEditThresholds(inputs, minOv).length === 0;
+
+  // 空欄 → ゲートで止まる（旧実装はここが true で 0/0 を送信していた）
+  assert.equal(gateWouldPass({ max_gap_s: "", keep_gap_s: "", max_overlap_s: "3" }), false);
+  assert.equal(gateWouldPass({ max_gap_s: "1.5", keep_gap_s: "", max_overlap_s: "3" }), false);
+  assert.equal(gateWouldPass({ max_gap_s: "", keep_gap_s: "0.5", max_overlap_s: "3" }), false);
+  assert.equal(gateWouldPass({ max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "" }), false);
+  assert.equal(gateWouldPass({ max_gap_s: " ", keep_gap_s: "0.5", max_overlap_s: "3" }), false);
+
+  // 妥当な値 → 従来どおり通る（ゲートを過剰に閉めていない）
+  assert.equal(gateWouldPass({ max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "3" }), true);
+  assert.equal(gateWouldPass({ max_gap_s: "0", keep_gap_s: "0", max_overlap_s: "3" }), true);
+});
+
+// 永続化ゲート（#36）との相互作用（#37）。thresholdValueToPersist は
+// parseThresholdInput で一度弾き、さらに validateAutoEditThresholds の
+// 自欄エラーでも弾く。#37 で空欄が errors に入るようになったため二重に弾くが、
+// 結果は変わらない（どちらも null）= 永続化の挙動は退行しない。
+test("thresholdValueToPersist: 空欄は #37 後も書かない（二重に弾くだけで無害）", () => {
+  const empty = { max_gap_s: "", keep_gap_s: "", max_overlap_s: "" };
+  assert.equal(thresholdValueToPersist("maxGap", empty, 0.3), null);
+  assert.equal(thresholdValueToPersist("keepGap", empty, 0.3), null);
+  assert.equal(thresholdValueToPersist("maxOv", empty, 0.3), null);
+
+  // 他欄が空でも、自欄が妥当なら従来どおり書ける（組み合わせエラーは自欄には付かない）
+  const onlyMaxGapFilled = { max_gap_s: "1.5", keep_gap_s: "", max_overlap_s: "3" };
+  assert.equal(
+    thresholdValueToPersist("maxGap", onlyMaxGapFilled, 0.3),
+    1.5,
+    "keep_gap が空でも max_gap 自体は妥当なので保存できる",
+  );
+  assert.equal(thresholdValueToPersist("keepGap", onlyMaxGapFilled, 0.3), null);
 });
 
 // ── Issue #36 補足バグ: 閾値入力を空にした瞬間 settings に 0 が保存される ──
@@ -241,6 +377,12 @@ test("thresholdValueToPersist: 未知の欄・入力欠落は書かない（安�
 test("thresholdValueToPersist: サーバ検証式と同じ値を弾く（ミラーの境界一致）", () => {
   // server.auto_edit_project: keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov
   // 「サーバが 400 にする値は settings にも書かない」が揃っていること。
+  //
+  // このミラーの対象は**数値として解釈できる入力**に限る（#37）。空欄は
+  // 「サーバに送る値」ではなく「まだ入力されていない」状態であり、サーバの
+  // 検証式と突き合わせる対象ではない。空欄はフロントのゲートで送信ごと止まる
+  // （上の「送信ゲート」テスト）。ここに空文字ケースを足すと、サーバ側の
+  // float("") が 400 になる挙動とフロントの未入力エラーを混同することになる。
   const minOv = 0.3;
   const cases = [
     { inputs: { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "0.3" }, ok: true }, // 境界（等号は妥当）
