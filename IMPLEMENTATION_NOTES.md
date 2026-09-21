@@ -50,6 +50,70 @@
 - **pause / resume**: `pausedAt` は聴感位置（⏸ でヘッドが指す場所 = 聞こえていた場所）。resume はその値を `posAtStart` にして新規スケジュールするため**エンジン位置への逆変換は不要** — 送信済み・未再生だったレイテンシ分は聞こえていた位置から鳴り直される。編集中の再スケジュール（notifyBlocksChanged）も同じ判断で聴感位置起点。
 - **スコープ**: 表示クロックのみ。fetch 遅延の先頭トリム（scheduleSegment の offsetS）は従来どおり正しく、エクスポート・サーバには影響しない。シーク（絶対時刻指定）にはエンジン/聴感の区別が生じない。
 
+## 被り一覧の「touched」分離と分類スナップショット（Issue #36）
+
+被り一覧（`static/js/panels.js`）は永続化しないフロントの一時状態を持つ。実機フィードバックで
+「閾値を変えると分類は変わるのにチェックが残る」「秒数を打った瞬間に結果が出てプレビューの
+意味がない」の2点が出たため、状態の持ち方を次のように設計し直した。
+
+- **`touchedPairs`（意思と既定の分離）**: 旧実装は `seenPairs`（= 一度でも描画して既定チェックの
+  判断を確定したペア）を持ち、「既知なら選択集合を尊重」していた。これは**ユーザーが手で操作した**
+  ことと**既定チェックを注入した**ことを同一視しており、分類が「解消可 → 長尺」に変わっても
+  既定で入れた ON が意思として残り続けた（保護対象が自動編集の対象に混ざる）。
+  新実装は `touchedPairs`（`setRowChecked` / `setAllChecked` / キーボードの toggle が刻む）だけを
+  意思として扱い、**touched でない行は描画のたびに `defaultChecked(overlap)` で再評価する**。
+  `seenPairs` と `selectionSeeded` は廃止した — 「判断が確定済みか」という概念は
+  「ユーザーが触ったか」に吸収され、Issue #45 が守っていた性質（一時消滅ペアの記録保持 /
+  分類未導出の行をユーザーが触ったときの意思保護）はすべて `touchedPairs` 側で成立する。
+  `carryOverlapSelection`（分割等で block_id が変わったペアへの引き継ぎ）も **touched な旧ペア
+  からだけ**引き継ぐ。既定チェックは意思ではないので、新ペアの分類から導出し直すのが正しい。
+- **`categorySnapshot`（プレビュー起点の確定）**: 閾値入力 → `saveSoon()` の 350ms デバウンス PUT →
+  サーバが新閾値で `classify_overlaps` → echo で `state.project.overlaps` 総入れ替え、という経路が
+  あるため、キーストロークのたびに分類チップが書き換わっていた。**分類ラベル（`category`）だけ**を
+  `pairKey → category` の Map で確定値として保持し、描画時に `applyCategorySnapshot` でかぶせる。
+  - 固定するのは分類だけ。**被り区間そのもの（start/end/block_ids による行の増減）は即時反映**する
+    （区間は編集の結果であって閾値の関数ではないため、止めると一覧が実データと乖離する）。
+  - スナップショットに無いペア（編集で新しく現れた被り）はサーバの分類をそのまま採用する。
+  - 確定のトリガはプレビュー成功・適用成功（`autoEdit` が `confirmOverlapCategories()` を呼ぶ）。
+  - **`project-set` 時点の分類でシードする**（`freshOverlapState(state.project?.overlaps)`）。
+    空 Map で始めると、プロジェクトを開いて一度もプレビューせずに閾値を触った場合に限り
+    echo の新分類が素通りし、「プレビューを押すまで分類は動かない」が**初回だけ成立しない**。
+    開いた時点の分類はサーバが確定させた正当な値なので、これを最初の確定値として扱う。
+    分類未導出（「不明」）の行は `buildCategorySnapshot` が確定しないため、echo で分類が届く
+    余地は従来どおり残る。
+  - `state.project.overlaps` は**書き換えない**。かぶせるのは描画側だけで、生データは次の確定で
+    本物の分類へ戻れる状態に保つ（`timelineModel.recomputeOverlapsSweep` のローカル分類引き継ぎも
+    生データを読むので、スナップショットと干渉しない）。
+  - `confirmOverlapCategories()` が元にするのは表示中の行ではなく `state.project.overlaps`。
+    `runAutoEdit` は冒頭で `flushSave()` するため、応答が返る頃には新閾値の echo が state に届いて
+    いる。ここで表示中の行を読むと古いスナップショットを確定し直すだけになる。
+- **リセット**: 上記2つと選択集合・カーソルは `freshOverlapState(openingOverlaps)` に一点集約し、
+  `project-set` が丸ごと入れ替える（状態を増やすたびに購読側へ手で足すと、前プロジェクトの記録が
+  漏れる）。スナップショットのシードもこの関数の中で行うので、リセット契約は1箇所のまま。
+- **確認ダイアログの配置**: `#overlapResetDialog` の DOM は `autoEdit.js` が直接引く。`main.js` は
+  `autoEdit` を import しているため `autoEdit → main` は循環する。既存の「`at*` 群は autoEdit が
+  所有する」DOM 所有ルールをそのまま延長した形。判定（`shouldConfirmOverlapReset` /
+  `overlapResetChoice`）と Promise ラッパ（`awaitOverlapResetChoice`）は引数で DOM を受ける純関数・
+  準純関数として切り出してあり、`importFlow.js` / `overlayGate.js` と同じ「規則は純関数・DOM は端で」
+  の流儀に揃えている。多重起動は `preview()` の `busy` フラグが `showModal` の前に立つ。
+  DOM 欠損（HTML / ID の退行）は **fail-closed**（確認を出せないなら実行しない）。fail-open だと
+  ダイアログが出ないままユーザーのチェックを無確認で破棄する方向に倒れる。他のダイアログ helper
+  は DOM 欠損ガードを持たず throw して止まるので、破壊的操作へ倒れない点で流儀が揃う。
+- **閾値の永続化ゲート（補足バグ。同時修正）**: 閾値入力欄を空にすると `Number("") === 0` が
+  `Number.isFinite` を通過し、settings に 0 が保存されてサーバへ飛んでいた。サーバ側で
+  `max_ov < min_ov` となり `classify_overlaps` が ValueError → 分類を放棄して一覧が**全行「不明」**に
+  化ける。ユーザーが明示的に `0` と打った場合も同一症状・同一経路なので、両方まとめて塞ぐ。
+  責務を3層に分け、**妥当性ルールの定義箇所を増やさない**のが設計の要点:
+  - `parseThresholdInput` … 「空」と「0」を取り違えないこと（表記レベル）だけを担う。
+  - `validateAutoEditThresholds` … 値が妥当か（意味レベル）。サーバ `auto_edit_project` の検証式
+    `keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov` のミラー。赤字表示と共用。
+  - `thresholdValueToPersist` … 上2つを合成して「settings へ書いてよいか」だけを決める。
+    新しいルールは書かず、検証結果に**自分の欄の `field` が含まれるか**だけを見る。これにより
+    「サーバが 400 で撥ねる値は settings にも書かない」が自動的に揃う。
+  検証は3欄まとめて行い、自分の欄に紐づくエラーだけを見る（`max_gap < keep_gap` のような
+  組み合わせエラーは単独の欄では判定できず、サーバも3値をまとめて見て 400 を返すため）。
+  インライン赤字は入力欄の生値を見て従来どおり出るので、「保存されないが理由は画面で分かる」。
+
 ## 検証
 
 CI（`.github/workflows/ci.yml`）と同じ手順をローカルで実行できる:

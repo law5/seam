@@ -1,5 +1,10 @@
 // UIモジュールの純関数ヘルパのテスト:
 // - autoEdit.formatAutoEditSummary / formatSpan（summary 表示整形）
+// - autoEdit.parseThresholdInput / thresholdValueToPersist
+//   （Issue #36: 空入力・不正値を settings へ永続化しない。妥当性判定は
+//    validateAutoEditThresholds に委ね、ルールの定義箇所を増やさない）
+// - autoEdit.shouldConfirmOverlapReset / overlapResetChoice / awaitOverlapResetChoice
+//   （Issue #36: チェック編集後のプレビュー確認ダイアログの条件と Promise 契約）
 // - transcriptPanel._findRowAt（現在行の二分探索 + 有界後方走査）
 // 各モジュールはモジュールトップで DOM に触らないため node で import できること自体も回帰検知になる。
 
@@ -7,8 +12,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  awaitOverlapResetChoice,
   formatAutoEditSummary,
   formatSpan,
+  overlapResetChoice,
+  parseThresholdInput,
+  shouldConfirmOverlapReset,
+  thresholdValueToPersist,
   validateAutoEditThresholds,
 } from "../../src/podcast_prep/static/js/autoEdit.js";
 import { _findRowAt } from "../../src/podcast_prep/static/js/transcriptPanel.js";
@@ -124,4 +134,261 @@ test("validateAutoEditThresholds: 非数と複数エラーの同時報告・min_
     0.3,
   );
   assert.deepStrictEqual(empty.map((e) => e.field), ["keepGap"]); // 0 < 0.5 → 判定超過
+});
+
+// ── Issue #36 補足バグ: 閾値入力を空にした瞬間 settings に 0 が保存される ──
+//
+// 旧実装は `Number(input.value)` を Number.isFinite に掛けるだけだったため、
+// 入力欄を空にした瞬間 Number("") === 0 が検証を通過し settings へ 0 が保存され、
+// 350ms 後の PUT でサーバへ飛んでいた。サーバ側では max_ov < min_ov となり
+// classify_overlaps が ValueError → 分類を放棄し、被り一覧が**全行「不明」**に化ける。
+// （インライン赤字は入力欄の生値を見るので、そちらの表示は従来どおり出る）
+
+test("parseThresholdInput: 空文字・空白のみは null（settings を汚さない）", () => {
+  assert.equal(parseThresholdInput(""), null, "ここが 0 を返したら settings に 0 が飛ぶ");
+  assert.equal(parseThresholdInput(" "), null, "Number(' ') も 0 になる同じ穴");
+  assert.equal(parseThresholdInput("\t\n"), null);
+});
+
+test("parseThresholdInput: 数値にならない入力も null", () => {
+  for (const raw of ["abc", "1.2.3", "--3", "1,5", "3s", null, undefined, {}, []]) {
+    assert.equal(parseThresholdInput(raw), null, String(raw));
+  }
+  assert.equal(parseThresholdInput(NaN), null);
+  assert.equal(parseThresholdInput(Infinity), null);
+});
+
+test("parseThresholdInput: 妥当な数値はそのまま通す（従来挙動を変えない）", () => {
+  assert.equal(parseThresholdInput("3"), 3);
+  assert.equal(parseThresholdInput("0.3"), 0.3);
+  assert.equal(parseThresholdInput(" 1.5 "), 1.5); // number input の前後空白
+  assert.equal(parseThresholdInput("0"), 0, "明示的に打った 0 は通す（妥当性は別レイヤの責務）");
+  assert.equal(parseThresholdInput(2.5), 2.5);
+  assert.equal(parseThresholdInput(0), 0);
+});
+
+// ── Issue #36 QA: 不正値も settings に永続化されていた（穴の残り半分） ──
+//
+// 空文字バグ（Number("") === 0）だけを塞いでも、ユーザーが明示的に `0` と打つと
+// parseThresholdInput は素直に 0 を返すので settings へ保存され、サーバで
+// max_ov < min_ov → classify_overlaps が ValueError → 一覧が全行「不明」になる。
+// 空文字のときと同一症状・同一経路なので、永続化ゲートで両方まとめて塞ぐ。
+//
+// レイヤ分離: 妥当性ルールは validateAutoEditThresholds（= サーバ検証式のミラー）に
+// 委ね、thresholdValueToPersist は「自分の欄にエラーがあるか」だけを見る。
+// 妥当性ルールの定義箇所は増えない。
+
+const OK = { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "3.0" };
+
+test("thresholdValueToPersist: 妥当な値は settings へ書く", () => {
+  assert.equal(thresholdValueToPersist("maxGap", OK, 0.3), 1.5);
+  assert.equal(thresholdValueToPersist("keepGap", OK, 0.3), 0.5);
+  assert.equal(thresholdValueToPersist("maxOv", OK, 0.3), 3);
+  // keep_gap の 0 は妥当（0 以上・max_gap 以下）なので書ける
+  assert.equal(
+    thresholdValueToPersist("keepGap", { ...OK, keep_gap_s: "0" }, 0.3),
+    0,
+    "妥当な 0 まで弾いてはいけない",
+  );
+});
+
+test("thresholdValueToPersist: 明示的な 0 でも範囲外なら settings に書かない（#36 QA）", () => {
+  // max_overlap_s = 0 は min_overlap_s(0.3) 未満 → サーバが 400 で撥ねる値
+  const zeroOv = { ...OK, max_overlap_s: "0" };
+  assert.equal(thresholdValueToPersist("maxOv", zeroOv, 0.3), null, "ここが 0 を返すと全行「不明」に化ける");
+  // 赤字は従来どおり出る（保存されないが理由は画面で分かる）
+  const errors = validateAutoEditThresholds(zeroOv, 0.3);
+  assert.deepStrictEqual(errors.map((e) => e.field), ["maxOv"]);
+});
+
+test("thresholdValueToPersist: 空文字・非数値も書かない（従来の修正を維持）", () => {
+  for (const raw of ["", " ", "abc", "1.2.3"]) {
+    assert.equal(thresholdValueToPersist("maxOv", { ...OK, max_overlap_s: raw }, 0.3), null, raw);
+  }
+});
+
+test("thresholdValueToPersist: keep_gap の負値も書かない（#36 QA）", () => {
+  const negative = { ...OK, keep_gap_s: "-1" };
+  assert.equal(thresholdValueToPersist("keepGap", negative, 0.3), null);
+  assert.ok(validateAutoEditThresholds(negative, 0.3).some((e) => e.field === "keepGap"), "赤字は出る");
+});
+
+test("thresholdValueToPersist: 組み合わせエラーは該当欄だけを止める（#36 QA）", () => {
+  // max_gap < keep_gap → validateAutoEditThresholds は keepGap にエラーを付ける。
+  // サーバも3値まとめて 400 を返すので、ここも同じ粒度で止める。
+  const crossed = { max_gap_s: "0.5", keep_gap_s: "2.0", max_overlap_s: "3.0" };
+  assert.equal(thresholdValueToPersist("keepGap", crossed, 0.3), null, "不整合な組み合わせは保存しない");
+  // maxGap 欄自体にはエラーが付かないので、そちらは保存できる
+  assert.equal(thresholdValueToPersist("maxGap", crossed, 0.3), 0.5);
+  assert.equal(thresholdValueToPersist("maxOv", crossed, 0.3), 3);
+});
+
+test("thresholdValueToPersist: min_overlap_s に追随する（欄の妥当範囲は固定値ではない）", () => {
+  const ov1 = { ...OK, max_overlap_s: "0.5" };
+  assert.equal(thresholdValueToPersist("maxOv", ov1, 0.3), 0.5, "min_ov=0.3 なら妥当");
+  assert.equal(thresholdValueToPersist("maxOv", ov1, 1.0), null, "min_ov=1.0 なら範囲外");
+  // min_ov 欠損は validateAutoEditThresholds と同じ 0.3 フォールバック
+  assert.equal(thresholdValueToPersist("maxOv", ov1, undefined), 0.5);
+});
+
+test("thresholdValueToPersist: 未知の欄・入力欠落は書かない（安全側）", () => {
+  assert.equal(thresholdValueToPersist("unknownField", OK, 0.3), null);
+  assert.equal(thresholdValueToPersist(undefined, OK, 0.3), null);
+  assert.equal(thresholdValueToPersist("maxOv", null, 0.3), null);
+  assert.equal(thresholdValueToPersist("maxOv", undefined, 0.3), null);
+});
+
+test("thresholdValueToPersist: サーバ検証式と同じ値を弾く（ミラーの境界一致）", () => {
+  // server.auto_edit_project: keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov
+  // 「サーバが 400 にする値は settings にも書かない」が揃っていること。
+  const minOv = 0.3;
+  const cases = [
+    { inputs: { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "0.3" }, ok: true }, // 境界（等号は妥当）
+    { inputs: { max_gap_s: "0.5", keep_gap_s: "0.5", max_overlap_s: "0.3" }, ok: true }, // 境界
+    { inputs: { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "0.29" }, ok: false },
+    { inputs: { max_gap_s: "0.49", keep_gap_s: "0.5", max_overlap_s: "3" }, ok: false },
+    { inputs: { max_gap_s: "1.5", keep_gap_s: "-0.01", max_overlap_s: "3" }, ok: false },
+  ];
+  for (const { inputs, ok } of cases) {
+    const serverWouldReject =
+      Number(inputs.keep_gap_s) < 0 ||
+      Number(inputs.max_gap_s) < Number(inputs.keep_gap_s) ||
+      Number(inputs.max_overlap_s) < minOv;
+    assert.equal(serverWouldReject, !ok, `前提: ${JSON.stringify(inputs)}`);
+    const persisted = ["maxGap", "keepGap", "maxOv"].map((f) =>
+      thresholdValueToPersist(f, inputs, minOv),
+    );
+    if (ok) {
+      assert.ok(persisted.every((v) => v !== null), `妥当なら全欄書ける: ${JSON.stringify(inputs)}`);
+    } else {
+      assert.ok(persisted.some((v) => v === null), `不正なら該当欄を止める: ${JSON.stringify(inputs)}`);
+    }
+  }
+});
+
+// ── Issue #36 改修③: プレビュー前の確認ダイアログを出す条件 ──
+//
+// 出すのは「ユーザーが被り一覧のチェックを手で変更している」ときだけ。
+// 触っていなければ失われるものが無いので、従来どおり無確認で即プレビューする
+// （毎回確認を挟むと自動調整のテンポが壊れる）。
+
+test("shouldConfirmOverlapReset: touched が無ければ確認しない", () => {
+  assert.equal(shouldConfirmOverlapReset(false), false);
+  assert.equal(shouldConfirmOverlapReset(undefined), false);
+  assert.equal(shouldConfirmOverlapReset(null), false);
+});
+
+test("shouldConfirmOverlapReset: touched があれば確認する", () => {
+  assert.equal(shouldConfirmOverlapReset(true), true);
+});
+
+test("overlapResetChoice: 「はい」だけが真・未知値と Esc は実行しない側へ倒す", () => {
+  assert.equal(overlapResetChoice("yes"), true);
+  assert.equal(overlapResetChoice("no"), false);
+  // 他ダイアログの値が紛れても勝手に実行しない（workdirConflictChoice と同じ安全側）
+  for (const value of ["resume", "overwrite", "discard", "archive", "", undefined, null]) {
+    assert.equal(overlapResetChoice(value), false, String(value));
+  }
+});
+
+// ── Issue #36 改修③: 確認ダイアログの Promise 契約 ──
+//
+// DOM 要素形の最小スタブ（EventTarget 相当）で <dialog> / <form> を代用する。
+// 固定したい規律:
+// - returnValue ではなく event.submitter?.value を読む
+// - Esc（cancel イベント）は「いいえ」
+// - settle で submit / cancel の**両方**のリスナーを外す（片方だけ once で残すと
+//   次回表示時に前回の残骸が発火して、押していないのに解決してしまう）
+
+function makeDialogStub() {
+  const listeners = new Map();
+  let shown = 0;
+  return {
+    shown: () => shown,
+    listenerCount: (type) => (listeners.get(type) || []).length,
+    showModal() {
+      shown += 1;
+    },
+    addEventListener(type, fn) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(fn);
+    },
+    removeEventListener(type, fn) {
+      const arr = listeners.get(type) || [];
+      const i = arr.indexOf(fn);
+      if (i >= 0) arr.splice(i, 1);
+    },
+    fire(type, event) {
+      for (const fn of [...(listeners.get(type) || [])]) fn(event);
+    },
+  };
+}
+
+test("awaitOverlapResetChoice: 「はい」で true・リスナーは両方外れる", async () => {
+  const dialog = makeDialogStub();
+  const form = makeDialogStub();
+  const promise = awaitOverlapResetChoice(dialog, form);
+  assert.equal(dialog.shown(), 1, "showModal は1回だけ");
+  form.fire("submit", { submitter: { value: "yes" } });
+  assert.equal(await promise, true);
+  assert.equal(form.listenerCount("submit"), 0, "submit リスナーが残っていない");
+  assert.equal(dialog.listenerCount("cancel"), 0, "cancel リスナーも必ず外す");
+});
+
+test("awaitOverlapResetChoice: 「いいえ」で false", async () => {
+  const dialog = makeDialogStub();
+  const form = makeDialogStub();
+  const promise = awaitOverlapResetChoice(dialog, form);
+  form.fire("submit", { submitter: { value: "no" } });
+  assert.equal(await promise, false);
+  assert.equal(form.listenerCount("submit"), 0);
+  assert.equal(dialog.listenerCount("cancel"), 0);
+});
+
+test("awaitOverlapResetChoice: Esc（cancel イベント）は「いいえ」扱い", async () => {
+  const dialog = makeDialogStub();
+  const form = makeDialogStub();
+  const promise = awaitOverlapResetChoice(dialog, form);
+  dialog.fire("cancel", {});
+  assert.equal(await promise, false);
+  assert.equal(form.listenerCount("submit"), 0, "cancel 経路でも submit リスナーを外す");
+  assert.equal(dialog.listenerCount("cancel"), 0);
+});
+
+test("awaitOverlapResetChoice: submitter 欠落（Enter 送信等）も「いいえ」", async () => {
+  const dialog = makeDialogStub();
+  const form = makeDialogStub();
+  const promise = awaitOverlapResetChoice(dialog, form);
+  form.fire("submit", {});
+  assert.equal(await promise, false);
+});
+
+test("awaitOverlapResetChoice: 前回の残骸が次回に発火しない", async () => {
+  const dialog = makeDialogStub();
+  const form = makeDialogStub();
+  await (async () => {
+    const p = awaitOverlapResetChoice(dialog, form);
+    dialog.fire("cancel", {});
+    return p;
+  })();
+  // 2回目: 「はい」で解決すること（1回目の cancel リスナーが残っていると
+  // 次の cancel で二重 resolve し、片方だけ once の実装では取りこぼす）
+  const second = awaitOverlapResetChoice(dialog, form);
+  assert.equal(dialog.shown(), 2);
+  assert.equal(form.listenerCount("submit"), 1, "現行の1件だけ");
+  assert.equal(dialog.listenerCount("cancel"), 1);
+  form.fire("submit", { submitter: { value: "yes" } });
+  assert.equal(await second, true);
+});
+
+// #36 QA: DOM 欠損（HTML / ID の退行）は **fail-closed**。
+// ここが true（fail-open）だと、確認ダイアログが出ないまま
+// ユーザーが手で付けたチェックを無確認で破棄する方向に倒れる。
+// 他のダイアログ helper（confirmExportOverwrite 等）は DOM 欠損ガードを持たず
+// throw して止まる = 破壊的操作へ倒れないので、流儀としても揃う。
+test("awaitOverlapResetChoice: ダイアログ未設置なら実行しない（fail-closed / #36 QA）", async () => {
+  assert.equal(await awaitOverlapResetChoice(null, null), false);
+  assert.equal(await awaitOverlapResetChoice(makeDialogStub(), null), false);
+  assert.equal(await awaitOverlapResetChoice(null, makeDialogStub()), false);
+  assert.equal(await awaitOverlapResetChoice(undefined, undefined), false);
 });
