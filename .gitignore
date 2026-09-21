@@ -1,6 +1,7 @@
 .seam/
 .podcast_prep/
 .claude/
+.serena/
 .venv/
 .uv-cache/
 __pycache__/
