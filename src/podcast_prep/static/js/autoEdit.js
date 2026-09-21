@@ -175,6 +175,11 @@ export function thresholdValueToPersist(field, inputs, minOverlapSeconds) {
   return value;
 }
 
+// 「無音を詰める」判定秒数の下限。サーバ server.AUTO_EDIT_MIN_MAX_GAP_S と
+// index.html の atMaxGap[min] のミラー（Issue #37）。0 を許すと
+// detect_silence_gaps(min_gap_s=0) が冒頭を含む**すべての無音**を詰める。
+export const MIN_MAX_GAP_S = 0.1;
+
 // 欄の識別子（validateAutoEditThresholds の field 名）→ opts のキー
 const THRESHOLD_INPUT_KEYS = {
   maxGap: "max_gap_s",
@@ -399,8 +404,12 @@ async function apply() {
 // 送信されていた。サーバの検証式は max_gap=0 / keep_gap=0 を合法として通すので、
 // detect_silence_gaps(min_gap_s=0) が**すべての無音を詰める**最も破壊的な編集が
 // 無警告で走る。空欄は「未入力」= エラーであって 0 ではない。
-// （ユーザーが明示的に打った 0 は従来どおり有効な入力として扱う。空と 0 の区別は
-//  parseThresholdInput が担い、妥当性ルールはこの関数のまま増やさない）
+// （空と 0 の区別は parseThresholdInput が担い、パース規則はこの関数で増やさない）
+//
+// 空欄を塞いでも API 直叩き・古い settings 由来の 0 は残るため、サーバ側にも
+// max_gap_s の下限 AUTO_EDIT_MIN_MAX_GAP_S = 0.1 を入れた（#37）。ここはその
+// ミラー。フロントで止めておかないと、0 を打ったユーザーにサーバ 400 の生
+// メッセージが toast で出る（実機FB #20 で潰した挙動に逆戻りする）。
 export function validateAutoEditThresholds(opts, minOverlapS = 0.3) {
   const errors = [];
   const maxGap = parseThresholdInput(opts?.max_gap_s);
@@ -409,6 +418,13 @@ export function validateAutoEditThresholds(opts, minOverlapS = 0.3) {
   const minOv = Number.isFinite(Number(minOverlapS)) ? Number(minOverlapS) : 0.3;
   if (maxGap === null) {
     errors.push({ field: "maxGap", message: "「超」の秒数に数値を入力してください" });
+  } else if (maxGap < MIN_MAX_GAP_S) {
+    // サーバ AUTO_EDIT_MIN_MAX_GAP_S のミラー。ここで止めないと、ユーザーが 0 と
+    // 打ったときにサーバ 400 の生メッセージが toast に出る（実機FB #20 で潰した挙動）。
+    errors.push({
+      field: "maxGap",
+      message: `詰める判定（超）の秒数は ${MIN_MAX_GAP_S} 秒以上にしてください（0 はすべての無音を詰めます）`,
+    });
   }
   if (keepGap === null) {
     errors.push({ field: "keepGap", message: "「→」の秒数に数値を入力してください" });

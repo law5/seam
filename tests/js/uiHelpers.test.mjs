@@ -16,6 +16,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  MIN_MAX_GAP_S,
   awaitOverlapResetChoice,
   formatAutoEditSummary,
   formatSpan,
@@ -183,21 +184,54 @@ test("validateAutoEditThresholds: 空文字・空白のみ・非数値が3欄そ
   }
 });
 
-test("validateAutoEditThresholds: 明示的な 0 は従来どおり通す（#37 で 0 の妥当性は変えない）", () => {
-  // max_gap_s=0 + keep_gap_s=0 は現状のサーバ検証式でも合法。空欄だけを塞ぐ修正で
-  // この挙動を壊さない（0 の妥当性そのものはサーバ側の別論点 = Issue 報告事項）。
-  assert.deepStrictEqual(
-    validateAutoEditThresholds({ max_gap_s: "0", keep_gap_s: "0", max_overlap_s: "3" }, 0.3),
-    [],
-  );
-  assert.deepStrictEqual(
-    validateAutoEditThresholds({ max_gap_s: 0, keep_gap_s: 0, max_overlap_s: 3 }, 0.3),
-    [],
-  );
-  // 0 は「空」と違って keep_gap の 0 以上チェックも通る
+test("validateAutoEditThresholds: keep_gap の明示的な 0 は通す（0 を一律に弾かない）", () => {
+  // keep_gap_s=0 は「呼吸を残さず詰める」正当な設定。空欄の修正で巻き込まない。
   assert.deepStrictEqual(
     validateAutoEditThresholds({ max_gap_s: "1.5", keep_gap_s: "0", max_overlap_s: "3" }, 0.3),
     [],
+  );
+  assert.deepStrictEqual(
+    validateAutoEditThresholds({ max_gap_s: 1.5, keep_gap_s: 0, max_overlap_s: 3 }, 0.3),
+    [],
+  );
+});
+
+// ── #37: max_gap_s の下限（サーバ AUTO_EDIT_MIN_MAX_GAP_S のミラー） ──
+//
+// 空欄を塞いでも、ユーザーが明示的に 0 と打つ経路・API 直叩き・古い settings 由来の
+// 0 は残る。max_gap_s=0 は detect_silence_gaps(min_gap_s=0) で冒頭を含む
+// **すべての無音**を詰めるため、サーバに下限 0.1 を入れ、フロントはそのミラーとして
+// 赤字で止める（止めないとサーバ 400 の生メッセージが toast に出る = 実機FB #20 の再来）。
+
+test("validateAutoEditThresholds: max_gap_s=0 は下限エラー（#37 サーバ下限のミラー）", () => {
+  for (const raw of ["0", 0, "0.05", "0.099"]) {
+    const errors = validateAutoEditThresholds(
+      { max_gap_s: raw, keep_gap_s: "0", max_overlap_s: "3" },
+      0.3,
+    );
+    assert.deepStrictEqual(errors.map((e) => e.field), ["maxGap"], String(raw));
+    assert.match(errors[0].message, /0\.1 秒以上/, String(raw));
+    assert.match(errors[0].message, /すべての無音を詰めます/, "理由が読み取れる文言");
+  }
+});
+
+test("validateAutoEditThresholds: max_gap_s の境界 0.1 は通す（下限を過剰に閉めない）", () => {
+  assert.deepStrictEqual(
+    validateAutoEditThresholds({ max_gap_s: "0.1", keep_gap_s: "0", max_overlap_s: "3" }, 0.3),
+    [],
+  );
+  assert.equal(MIN_MAX_GAP_S, 0.1, "サーバ AUTO_EDIT_MIN_MAX_GAP_S と同じ値");
+});
+
+test("validateAutoEditThresholds: 下限エラーは空欄エラーと重複しない", () => {
+  // 空欄は「未入力」、0 は「下限未満」。同じ欄に2つ出さない
+  assert.equal(
+    validateAutoEditThresholds({ max_gap_s: "", keep_gap_s: "0", max_overlap_s: "3" }, 0.3).length,
+    1,
+  );
+  assert.equal(
+    validateAutoEditThresholds({ max_gap_s: "0", keep_gap_s: "0", max_overlap_s: "3" }, 0.3).length,
+    1,
   );
 });
 
@@ -247,9 +281,12 @@ test("送信ゲート: 空欄は errors 非空 = renderThresholdErrors が false
   assert.equal(gateWouldPass({ max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "" }), false);
   assert.equal(gateWouldPass({ max_gap_s: " ", keep_gap_s: "0.5", max_overlap_s: "3" }), false);
 
+  // max_gap_s=0 もゲートで止まる（#37 のサーバ下限ミラー）
+  assert.equal(gateWouldPass({ max_gap_s: "0", keep_gap_s: "0", max_overlap_s: "3" }), false);
+
   // 妥当な値 → 従来どおり通る（ゲートを過剰に閉めていない）
   assert.equal(gateWouldPass({ max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "3" }), true);
-  assert.equal(gateWouldPass({ max_gap_s: "0", keep_gap_s: "0", max_overlap_s: "3" }), true);
+  assert.equal(gateWouldPass({ max_gap_s: "0.1", keep_gap_s: "0", max_overlap_s: "3" }), true);
 });
 
 // 永続化ゲート（#36）との相互作用（#37）。thresholdValueToPersist は
@@ -390,9 +427,15 @@ test("thresholdValueToPersist: サーバ検証式と同じ値を弾く（ミラ�
     { inputs: { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "0.29" }, ok: false },
     { inputs: { max_gap_s: "0.49", keep_gap_s: "0.5", max_overlap_s: "3" }, ok: false },
     { inputs: { max_gap_s: "1.5", keep_gap_s: "-0.01", max_overlap_s: "3" }, ok: false },
+    // #37 で追加された下限（サーバでは複合述語の手前の独立チェック）
+    { inputs: { max_gap_s: "0.1", keep_gap_s: "0", max_overlap_s: "3" }, ok: true }, // 境界
+    { inputs: { max_gap_s: "0", keep_gap_s: "0", max_overlap_s: "3" }, ok: false },
+    { inputs: { max_gap_s: "0.05", keep_gap_s: "0", max_overlap_s: "3" }, ok: false },
   ];
   for (const { inputs, ok } of cases) {
     const serverWouldReject =
+      // server._validate_auto_edit_thresholds: 下限は複合述語の手前で個別に見る
+      Number(inputs.max_gap_s) < MIN_MAX_GAP_S ||
       Number(inputs.keep_gap_s) < 0 ||
       Number(inputs.max_gap_s) < Number(inputs.keep_gap_s) ||
       Number(inputs.max_overlap_s) < minOv;
