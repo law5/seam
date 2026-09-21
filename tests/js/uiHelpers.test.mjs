@@ -1,6 +1,8 @@
 // UIモジュールの純関数ヘルパのテスト:
 // - autoEdit.formatAutoEditSummary / formatSpan（summary 表示整形）
-// - autoEdit.parseThresholdInput（Issue #36: 空入力で settings に 0 を保存しない）
+// - autoEdit.parseThresholdInput / thresholdValueToPersist
+//   （Issue #36: 空入力・不正値を settings へ永続化しない。妥当性判定は
+//    validateAutoEditThresholds に委ね、ルールの定義箇所を増やさない）
 // - autoEdit.shouldConfirmOverlapReset / overlapResetChoice / awaitOverlapResetChoice
 //   （Issue #36: チェック編集後のプレビュー確認ダイアログの条件と Promise 契約）
 // - transcriptPanel._findRowAt（現在行の二分探索 + 有界後方走査）
@@ -16,6 +18,7 @@ import {
   overlapResetChoice,
   parseThresholdInput,
   shouldConfirmOverlapReset,
+  thresholdValueToPersist,
   validateAutoEditThresholds,
 } from "../../src/podcast_prep/static/js/autoEdit.js";
 import { _findRowAt } from "../../src/podcast_prep/static/js/transcriptPanel.js";
@@ -159,9 +162,108 @@ test("parseThresholdInput: 妥当な数値はそのまま通す（従来挙動�
   assert.equal(parseThresholdInput("3"), 3);
   assert.equal(parseThresholdInput("0.3"), 0.3);
   assert.equal(parseThresholdInput(" 1.5 "), 1.5); // number input の前後空白
-  assert.equal(parseThresholdInput("0"), 0, "明示的に打った 0 は通す（検証は別レイヤの責務）");
+  assert.equal(parseThresholdInput("0"), 0, "明示的に打った 0 は通す（妥当性は別レイヤの責務）");
   assert.equal(parseThresholdInput(2.5), 2.5);
   assert.equal(parseThresholdInput(0), 0);
+});
+
+// ── Issue #36 QA: 不正値も settings に永続化されていた（穴の残り半分） ──
+//
+// 空文字バグ（Number("") === 0）だけを塞いでも、ユーザーが明示的に `0` と打つと
+// parseThresholdInput は素直に 0 を返すので settings へ保存され、サーバで
+// max_ov < min_ov → classify_overlaps が ValueError → 一覧が全行「不明」になる。
+// 空文字のときと同一症状・同一経路なので、永続化ゲートで両方まとめて塞ぐ。
+//
+// レイヤ分離: 妥当性ルールは validateAutoEditThresholds（= サーバ検証式のミラー）に
+// 委ね、thresholdValueToPersist は「自分の欄にエラーがあるか」だけを見る。
+// 妥当性ルールの定義箇所は増えない。
+
+const OK = { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "3.0" };
+
+test("thresholdValueToPersist: 妥当な値は settings へ書く", () => {
+  assert.equal(thresholdValueToPersist("maxGap", OK, 0.3), 1.5);
+  assert.equal(thresholdValueToPersist("keepGap", OK, 0.3), 0.5);
+  assert.equal(thresholdValueToPersist("maxOv", OK, 0.3), 3);
+  // keep_gap の 0 は妥当（0 以上・max_gap 以下）なので書ける
+  assert.equal(
+    thresholdValueToPersist("keepGap", { ...OK, keep_gap_s: "0" }, 0.3),
+    0,
+    "妥当な 0 まで弾いてはいけない",
+  );
+});
+
+test("thresholdValueToPersist: 明示的な 0 でも範囲外なら settings に書かない（#36 QA）", () => {
+  // max_overlap_s = 0 は min_overlap_s(0.3) 未満 → サーバが 400 で撥ねる値
+  const zeroOv = { ...OK, max_overlap_s: "0" };
+  assert.equal(thresholdValueToPersist("maxOv", zeroOv, 0.3), null, "ここが 0 を返すと全行「不明」に化ける");
+  // 赤字は従来どおり出る（保存されないが理由は画面で分かる）
+  const errors = validateAutoEditThresholds(zeroOv, 0.3);
+  assert.deepStrictEqual(errors.map((e) => e.field), ["maxOv"]);
+});
+
+test("thresholdValueToPersist: 空文字・非数値も書かない（従来の修正を維持）", () => {
+  for (const raw of ["", " ", "abc", "1.2.3"]) {
+    assert.equal(thresholdValueToPersist("maxOv", { ...OK, max_overlap_s: raw }, 0.3), null, raw);
+  }
+});
+
+test("thresholdValueToPersist: keep_gap の負値も書かない（#36 QA）", () => {
+  const negative = { ...OK, keep_gap_s: "-1" };
+  assert.equal(thresholdValueToPersist("keepGap", negative, 0.3), null);
+  assert.ok(validateAutoEditThresholds(negative, 0.3).some((e) => e.field === "keepGap"), "赤字は出る");
+});
+
+test("thresholdValueToPersist: 組み合わせエラーは該当欄だけを止める（#36 QA）", () => {
+  // max_gap < keep_gap → validateAutoEditThresholds は keepGap にエラーを付ける。
+  // サーバも3値まとめて 400 を返すので、ここも同じ粒度で止める。
+  const crossed = { max_gap_s: "0.5", keep_gap_s: "2.0", max_overlap_s: "3.0" };
+  assert.equal(thresholdValueToPersist("keepGap", crossed, 0.3), null, "不整合な組み合わせは保存しない");
+  // maxGap 欄自体にはエラーが付かないので、そちらは保存できる
+  assert.equal(thresholdValueToPersist("maxGap", crossed, 0.3), 0.5);
+  assert.equal(thresholdValueToPersist("maxOv", crossed, 0.3), 3);
+});
+
+test("thresholdValueToPersist: min_overlap_s に追随する（欄の妥当範囲は固定値ではない）", () => {
+  const ov1 = { ...OK, max_overlap_s: "0.5" };
+  assert.equal(thresholdValueToPersist("maxOv", ov1, 0.3), 0.5, "min_ov=0.3 なら妥当");
+  assert.equal(thresholdValueToPersist("maxOv", ov1, 1.0), null, "min_ov=1.0 なら範囲外");
+  // min_ov 欠損は validateAutoEditThresholds と同じ 0.3 フォールバック
+  assert.equal(thresholdValueToPersist("maxOv", ov1, undefined), 0.5);
+});
+
+test("thresholdValueToPersist: 未知の欄・入力欠落は書かない（安全側）", () => {
+  assert.equal(thresholdValueToPersist("unknownField", OK, 0.3), null);
+  assert.equal(thresholdValueToPersist(undefined, OK, 0.3), null);
+  assert.equal(thresholdValueToPersist("maxOv", null, 0.3), null);
+  assert.equal(thresholdValueToPersist("maxOv", undefined, 0.3), null);
+});
+
+test("thresholdValueToPersist: サーバ検証式と同じ値を弾く（ミラーの境界一致）", () => {
+  // server.auto_edit_project: keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov
+  // 「サーバが 400 にする値は settings にも書かない」が揃っていること。
+  const minOv = 0.3;
+  const cases = [
+    { inputs: { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "0.3" }, ok: true }, // 境界（等号は妥当）
+    { inputs: { max_gap_s: "0.5", keep_gap_s: "0.5", max_overlap_s: "0.3" }, ok: true }, // 境界
+    { inputs: { max_gap_s: "1.5", keep_gap_s: "0.5", max_overlap_s: "0.29" }, ok: false },
+    { inputs: { max_gap_s: "0.49", keep_gap_s: "0.5", max_overlap_s: "3" }, ok: false },
+    { inputs: { max_gap_s: "1.5", keep_gap_s: "-0.01", max_overlap_s: "3" }, ok: false },
+  ];
+  for (const { inputs, ok } of cases) {
+    const serverWouldReject =
+      Number(inputs.keep_gap_s) < 0 ||
+      Number(inputs.max_gap_s) < Number(inputs.keep_gap_s) ||
+      Number(inputs.max_overlap_s) < minOv;
+    assert.equal(serverWouldReject, !ok, `前提: ${JSON.stringify(inputs)}`);
+    const persisted = ["maxGap", "keepGap", "maxOv"].map((f) =>
+      thresholdValueToPersist(f, inputs, minOv),
+    );
+    if (ok) {
+      assert.ok(persisted.every((v) => v !== null), `妥当なら全欄書ける: ${JSON.stringify(inputs)}`);
+    } else {
+      assert.ok(persisted.some((v) => v === null), `不正なら該当欄を止める: ${JSON.stringify(inputs)}`);
+    }
+  }
 });
 
 // ── Issue #36 改修③: プレビュー前の確認ダイアログを出す条件 ──
@@ -279,8 +381,14 @@ test("awaitOverlapResetChoice: 前回の残骸が次回に発火しない", asyn
   assert.equal(await second, true);
 });
 
-test("awaitOverlapResetChoice: ダイアログ未設置なら従来どおり即実行（true）", async () => {
-  assert.equal(await awaitOverlapResetChoice(null, null), true);
-  assert.equal(await awaitOverlapResetChoice(makeDialogStub(), null), true);
-  assert.equal(await awaitOverlapResetChoice(null, makeDialogStub()), true);
+// #36 QA: DOM 欠損（HTML / ID の退行）は **fail-closed**。
+// ここが true（fail-open）だと、確認ダイアログが出ないまま
+// ユーザーが手で付けたチェックを無確認で破棄する方向に倒れる。
+// 他のダイアログ helper（confirmExportOverwrite 等）は DOM 欠損ガードを持たず
+// throw して止まる = 破壊的操作へ倒れないので、流儀としても揃う。
+test("awaitOverlapResetChoice: ダイアログ未設置なら実行しない（fail-closed / #36 QA）", async () => {
+  assert.equal(await awaitOverlapResetChoice(null, null), false);
+  assert.equal(await awaitOverlapResetChoice(makeDialogStub(), null), false);
+  assert.equal(await awaitOverlapResetChoice(null, makeDialogStub()), false);
+  assert.equal(await awaitOverlapResetChoice(undefined, undefined), false);
 });

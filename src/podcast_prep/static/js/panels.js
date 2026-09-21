@@ -21,7 +21,8 @@
 // - touchedPairs: ユーザーが明示的にチェックを操作したペア。触っていない行は
 //   常に分類（category）から既定チェックを再評価する = 閾値変更で分類が変われば追従する。
 // - categorySnapshot: プレビュー/適用で確定した分類。閾値を変えただけでは一覧の
-//   分類ラベルを書き換えない（プレビュー起点で確定させる）。
+//   分類ラベルを書き換えない（プレビュー起点で確定させる）。**project-set 時点の
+//   分類でシードする**（#36 QA。空で始めると初回だけ echo が素通りする）。
 // autoEdit は hasTouchedOverlaps() / clearOverlapTouched() / confirmOverlapCategories()
 // で読み書きする（引き続き一方向参照）。
 
@@ -246,8 +247,10 @@ function bindLoudnormOption(input, settingsKey) {
 function subscribe() {
   on("project-set", () => {
     playerDisabled = false;
-    // 新しいプロジェクト世代: 被り一覧の一時状態を丸ごと捨てて既定チェックを再注入
-    const fresh = freshOverlapState();
+    // 新しいプロジェクト世代: 被り一覧の一時状態を丸ごと捨てて既定チェックを再注入。
+    // 分類スナップショットは**開いた時点の分類でシード**する（#36 QA。空で始めると
+    // 初回に限り閾値変更の echo が素通りし、プレビュー起点の確定が成立しない）。
+    const fresh = freshOverlapState(state.project?.overlaps);
     selectedPairs = fresh.selected;
     touchedPairs = fresh.touched;
     categorySnapshot = fresh.snapshot;
@@ -334,14 +337,22 @@ export function categoryInfo(category) {
 
 // プロジェクト世代ごとにリセットする被り一覧の一時状態（純関数・テスト対象）。
 // project-set の購読がこれで全部入れ替える。**リセット漏れを作らないための一点管理**:
-// 状態を増やすたびに購読側へ手で足していくと、前プロジェクトの「触った」記録や
+// 状態を増やしたときに購読側へ手で足していくと、前プロジェクトの「触った」記録や
 // 確定分類が新プロジェクトへ漏れる（別素材のペアキーがたまたま一致すると、
 // 触ってもいない行がユーザー意思扱いで固定される）。
-export function freshOverlapState() {
+//
+// openingOverlaps（#36 QA）: **開いた時点の分類でスナップショットをシードする**。
+// 空 Map で始めると、プロジェクトを開いて一度もプレビューせずに閾値を触った場合に
+// 限り echo の新分類が素通りし、「プレビューを押すまで分類は動かない」が初回だけ
+// 成立しない（改修の主目的そのものが初回に効かない）。開いた時点の分類は
+// サーバが確定させた正当な値なので、これを最初の確定値として扱うのが筋。
+// 分類未導出（「不明」）の行は buildCategorySnapshot が確定しないため、
+// echo で分類が届く余地は従来どおり残る。
+export function freshOverlapState(openingOverlaps = null) {
   return {
     selected: new Set(),  // チェック済みペア
     touched: new Set(),   // ユーザーが明示的に操作したペア（Issue #36）
-    snapshot: new Map(),  // プレビュー/適用で確定した分類（Issue #36）
+    snapshot: buildCategorySnapshot(openingOverlaps), // 開いた時点の分類で確定（#36 QA）
     cursorIndex: -1,      // Prev/Next のカーソル
   };
 }

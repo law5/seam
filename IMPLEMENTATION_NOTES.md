@@ -75,25 +75,44 @@
     （区間は編集の結果であって閾値の関数ではないため、止めると一覧が実データと乖離する）。
   - スナップショットに無いペア（編集で新しく現れた被り）はサーバの分類をそのまま採用する。
   - 確定のトリガはプレビュー成功・適用成功（`autoEdit` が `confirmOverlapCategories()` を呼ぶ）。
+  - **`project-set` 時点の分類でシードする**（`freshOverlapState(state.project?.overlaps)`）。
+    空 Map で始めると、プロジェクトを開いて一度もプレビューせずに閾値を触った場合に限り
+    echo の新分類が素通りし、「プレビューを押すまで分類は動かない」が**初回だけ成立しない**。
+    開いた時点の分類はサーバが確定させた正当な値なので、これを最初の確定値として扱う。
+    分類未導出（「不明」）の行は `buildCategorySnapshot` が確定しないため、echo で分類が届く
+    余地は従来どおり残る。
   - `state.project.overlaps` は**書き換えない**。かぶせるのは描画側だけで、生データは次の確定で
     本物の分類へ戻れる状態に保つ（`timelineModel.recomputeOverlapsSweep` のローカル分類引き継ぎも
     生データを読むので、スナップショットと干渉しない）。
   - `confirmOverlapCategories()` が元にするのは表示中の行ではなく `state.project.overlaps`。
     `runAutoEdit` は冒頭で `flushSave()` するため、応答が返る頃には新閾値の echo が state に届いて
     いる。ここで表示中の行を読むと古いスナップショットを確定し直すだけになる。
-- **リセット**: 上記2つと選択集合・カーソルは `freshOverlapState()` に一点集約し、`project-set` が
-  丸ごと入れ替える（状態を増やすたびに購読側へ手で足すと、前プロジェクトの記録が漏れる）。
+- **リセット**: 上記2つと選択集合・カーソルは `freshOverlapState(openingOverlaps)` に一点集約し、
+  `project-set` が丸ごと入れ替える（状態を増やすたびに購読側へ手で足すと、前プロジェクトの記録が
+  漏れる）。スナップショットのシードもこの関数の中で行うので、リセット契約は1箇所のまま。
 - **確認ダイアログの配置**: `#overlapResetDialog` の DOM は `autoEdit.js` が直接引く。`main.js` は
   `autoEdit` を import しているため `autoEdit → main` は循環する。既存の「`at*` 群は autoEdit が
   所有する」DOM 所有ルールをそのまま延長した形。判定（`shouldConfirmOverlapReset` /
   `overlapResetChoice`）と Promise ラッパ（`awaitOverlapResetChoice`）は引数で DOM を受ける純関数・
   準純関数として切り出してあり、`importFlow.js` / `overlayGate.js` と同じ「規則は純関数・DOM は端で」
   の流儀に揃えている。多重起動は `preview()` の `busy` フラグが `showModal` の前に立つ。
-- **補足バグ（同時修正）**: 閾値入力欄を空にすると `Number("") === 0` が `Number.isFinite` を通過し、
-  settings に 0 が保存されてサーバへ飛んでいた。サーバ側で `max_ov < min_ov` となり
-  `classify_overlaps` が ValueError → 分類を放棄して一覧が**全行「不明」**に化ける。
-  `parseThresholdInput` を挟み、空文字・空白のみ・数値にならない入力では settings を更新しない
-  （インライン赤字の表示は入力欄の生値を見るので従来どおり出る）。
+  DOM 欠損（HTML / ID の退行）は **fail-closed**（確認を出せないなら実行しない）。fail-open だと
+  ダイアログが出ないままユーザーのチェックを無確認で破棄する方向に倒れる。他のダイアログ helper
+  は DOM 欠損ガードを持たず throw して止まるので、破壊的操作へ倒れない点で流儀が揃う。
+- **閾値の永続化ゲート（補足バグ。同時修正）**: 閾値入力欄を空にすると `Number("") === 0` が
+  `Number.isFinite` を通過し、settings に 0 が保存されてサーバへ飛んでいた。サーバ側で
+  `max_ov < min_ov` となり `classify_overlaps` が ValueError → 分類を放棄して一覧が**全行「不明」**に
+  化ける。ユーザーが明示的に `0` と打った場合も同一症状・同一経路なので、両方まとめて塞ぐ。
+  責務を3層に分け、**妥当性ルールの定義箇所を増やさない**のが設計の要点:
+  - `parseThresholdInput` … 「空」と「0」を取り違えないこと（表記レベル）だけを担う。
+  - `validateAutoEditThresholds` … 値が妥当か（意味レベル）。サーバ `auto_edit_project` の検証式
+    `keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov` のミラー。赤字表示と共用。
+  - `thresholdValueToPersist` … 上2つを合成して「settings へ書いてよいか」だけを決める。
+    新しいルールは書かず、検証結果に**自分の欄の `field` が含まれるか**だけを見る。これにより
+    「サーバが 400 で撥ねる値は settings にも書かない」が自動的に揃う。
+  検証は3欄まとめて行い、自分の欄に紐づくエラーだけを見る（`max_gap < keep_gap` のような
+  組み合わせエラーは単独の欄では判定できず、サーバも3値をまとめて見て 400 を返すため）。
+  インライン赤字は入力欄の生値を見て従来どおり出るので、「保存されないが理由は画面で分かる」。
 
 ## 検証
 

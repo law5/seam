@@ -3,7 +3,10 @@
 // persistence.runAutoEdit が持つ。本モジュールは UI と表示だけを担う:
 // - チェックボックス/閾値入力（settings.auto_edit_* と双方向同期 + saveSoon。keep_overlap_s はUIに出さない）
 // - 閾値のフロント事前検証（validateAutoEditThresholds → フィールド直下の .at-error 赤字。
-//   不正のままプレビュー/適用は送信しない。サーバ400検証は最後の砦としてそのまま）
+//   不正のままプレビュー/適用は送信しない。サーバ400検証は最後の砦としてそのまま）。
+//   同じ検証結果を**永続化ゲート**（thresholdValueToPersist）も参照する: サーバが 400 で
+//   撥ねる値は settings にも書かない（#36 QA。max_ov: 0 が保存されると classify_overlaps が
+//   ValueError → 被り一覧が全行「不明」に化ける）。妥当性ルールの定義箇所は1つのまま。
 // - プレビュー: summary 表示 + waveform.setPreviewRegions ハッチ（gaps=青 / overlaps=橙）
 // - 適用: toast。409 は persistence が自動再プレビューした dry_run 応答として返る
 // - チェック/閾値変更・任意の編集(blocks-changed)・project-set → 適用ボタン無効化 + ハッチクリア
@@ -22,6 +25,7 @@
 // このダイアログの DOM も autoEdit が直接引く（main への注入も逆参照も作らない）。
 // 判定そのものは shouldConfirmOverlapReset（純関数・テスト対象）に切り出し、
 // importFlow.js / overlayGate.js と同じ「規則は純関数・DOM は端で」の流儀に揃えている。
+// DOM 欠損時は fail-closed（確認を出せないなら実行しない）。
 
 import { state, emit, on } from "./state.js";
 import { runAutoEdit, saveSoon } from "./persistence.js";
@@ -71,9 +75,11 @@ export function initAutoEdit(elements) {
   });
   els.overlaps.addEventListener("change", invalidatePreview);
   els.gaps.addEventListener("change", invalidatePreview);
-  bindThreshold(els.maxGap, "auto_edit_max_gap_s");
-  bindThreshold(els.keepGap, "auto_edit_keep_gap_s");
-  bindThreshold(els.maxOv, "auto_edit_max_overlap_s");
+  // 第3引数は validateAutoEditThresholds の field 名（永続化ゲートが自分の欄の
+  // エラーだけを見るために必要。#36 QA）
+  bindThreshold(els.maxGap, "auto_edit_max_gap_s", "maxGap");
+  bindThreshold(els.keepGap, "auto_edit_keep_gap_s", "keepGap");
+  bindThreshold(els.maxOv, "auto_edit_max_overlap_s", "maxOv");
 
   on("project-set", () => {
     syncFromSettings();
@@ -90,10 +96,13 @@ export function initAutoEdit(elements) {
   updateEnabled();
 }
 
-// 閾値入力: settings.auto_edit_* へ書いて saveSoon（既存 setTrackField と同じ永続化パターン）
-function bindThreshold(input, settingsKey) {
+// 閾値入力: settings.auto_edit_* へ書いて saveSoon（既存 setTrackField と同じ永続化パターン）。
+// 書いてよいかの判断は thresholdValueToPersist（下）が一手に引き受ける。
+function bindThreshold(input, settingsKey, field) {
   input.addEventListener("input", () => {
-    const value = parseThresholdInput(input.value);
+    // 検証は**3欄まとめて**行う。max_gap < keep_gap のような組み合わせエラーは
+    // 単独の欄だけ見ても判定できないため（サーバの検証式も3値をまとめて見る）。
+    const value = thresholdValueToPersist(field, currentThresholdInputs(), minOverlapS());
     if (state.project?.settings && value !== null) {
       state.project.settings[settingsKey] = value;
       saveSoon();
@@ -103,15 +112,26 @@ function bindThreshold(input, settingsKey) {
   });
 }
 
-// 閾値入力欄の値 → settings へ書いてよい数値 / 書いてはいけない null（純関数・テスト対象）。
+// 閾値3欄の生値（検証・永続化の判断はここを唯一の入力とする）
+function currentThresholdInputs() {
+  return {
+    max_gap_s: els.maxGap.value,
+    keep_gap_s: els.keepGap.value,
+    max_overlap_s: els.maxOv.value,
+  };
+}
+
+function minOverlapS() {
+  return state.project?.settings?.min_overlap_s;
+}
+
+// 閾値入力欄の値 → 数値 / 数値にならない null（純関数・テスト対象）。
 //
 // Issue #36 の補足バグ: 旧実装は `Number(input.value)` をそのまま Number.isFinite に
-// 掛けていたため、**入力欄を空にした瞬間** `Number("") === 0` が検証を通過し
-// settings に 0 が保存されてサーバへ飛んでいた。サーバ側では max_ov < min_ov となり
-// classify_overlaps が ValueError → 分類を放棄し、被り一覧が全行「不明」に化ける。
-// （空白のみ・"abc" 等も同じ穴。Number(" ") も 0 になる）
-// 空文字・空白のみ・数値にならない入力では settings を更新しない = 直前の妥当な値が残る。
-// インライン赤字（renderThresholdErrors）は入力欄の生値を見るので従来どおり出る。
+// 掛けていたため、**入力欄を空にした瞬間** `Number("") === 0` が検証を通過していた
+// （空白のみ・"abc" 等も同じ穴。Number(" ") も 0 になる）。
+// この関数の責務は**「空」と「0」を取り違えないこと**だけ。値が妥当かどうか
+// （範囲・欄どうしの整合）は validateAutoEditThresholds の責務で、混ぜない。
 export function parseThresholdInput(raw) {
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
   if (typeof raw !== "string") return null;
@@ -119,6 +139,48 @@ export function parseThresholdInput(raw) {
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
+
+// 閾値欄 field の値を settings へ永続化してよいか（純関数・テスト対象）。
+// 書いてよければ数値、書いてはいけなければ null を返す。
+//
+// Issue #36 QA: 空文字バグ（`Number("") === 0`）を塞いだだけでは**穴の半分**しか
+// 埋まっていなかった。ユーザーが明示的に `0` と打つと parseThresholdInput は
+// 素直に 0 を返すので、settings に `auto_edit_max_overlap_s: 0` が保存されて
+// サーバへ飛ぶ。サーバ側で `max_ov < min_ov` となり classify_overlaps が
+// ValueError → 分類を放棄し、被り一覧が**全行「不明」**に化ける。空文字のときと
+// **同一症状・同一経路**なので、片方だけ塞いだ状態で残さない。
+//
+// 【レイヤ分離の解き方】新しい妥当性ルールをここに書き足すことはしない。
+// 判定は既存の validateAutoEditThresholds に丸ごと委ね、**その結果に自分の欄の
+// エラーが含まれるかどうかだけ**を見る。同関数はサーバ auto_edit_project の
+// 検証式（keep_gap < 0 / max_gap < keep_gap / max_ov < min_ov）のミラーとして
+// 書かれている = 「サーバが 400 で撥ねる値は settings にも書かない」が自動的に揃い、
+// 妥当性ルールの定義箇所は1つのまま増えない。
+// - parseThresholdInput … 「空」と「0」の区別（表記レベル）
+// - validateAutoEditThresholds … 値が妥当か（意味レベル。赤字表示と共用）
+// - この関数 … 上2つを合成して「永続化してよいか」だけを決める
+//
+// 検証を3欄まとめて行い、自分の欄に紐づくエラーだけを見るのが要点。
+// max_gap < keep_gap のような組み合わせエラーは単独の欄では判定できず、
+// かつサーバも3値をまとめて見て 400 を返すため、ここで同じ粒度に揃える。
+// インライン赤字（renderThresholdErrors）は入力欄の生値を見て従来どおり出るので、
+// 「保存されないが理由は赤字で分かる」状態になる。
+export function thresholdValueToPersist(field, inputs, minOverlapSeconds) {
+  const raw = THRESHOLD_INPUT_KEYS[field];
+  if (!raw) return null; // 未知の欄は書かない（安全側）
+  const value = parseThresholdInput(inputs?.[raw]);
+  if (value === null) return null; // 空・空白・非数値
+  const errors = validateAutoEditThresholds(inputs, minOverlapSeconds);
+  if (errors.some((e) => e.field === field)) return null; // 不正値は settings に書かない
+  return value;
+}
+
+// 欄の識別子（validateAutoEditThresholds の field 名）→ opts のキー
+const THRESHOLD_INPUT_KEYS = {
+  maxGap: "max_gap_s",
+  keepGap: "keep_gap_s",
+  maxOv: "max_overlap_s",
+};
 
 // project-set 時に settings から閾値欄を初期化（未設定は契約既定値）
 function syncFromSettings() {
@@ -217,8 +279,13 @@ export function overlapResetChoice(submitterValue) {
 // - Esc（cancel イベント）は「いいえ」扱い
 // - settle で submit / cancel 両方のリスナーを必ず外す（片方だけ once にすると
 //   次回表示時に前回の残骸が発火する）
+// - DOM 欠損（HTML / ID の退行）は **fail-closed = 実行しない**（#36 QA）。
+//   他のダイアログ helper（confirmExportOverwrite 等）は DOM 欠損ガードを持たず
+//   throw して止まる = 破壊的操作へ倒れない。ここだけ fail-open で true を返すと、
+//   ダイアログが出ないまま**ユーザーが手で付けたチェックを無確認で破棄**する方向に
+//   倒れる。確認を出せないなら実行しないのがコードベースの流儀と揃う。
 export function awaitOverlapResetChoice(dialog, form) {
-  if (!dialog || !form) return Promise.resolve(true); // ダイアログ未設置の環境は従来挙動
+  if (!dialog || !form) return Promise.resolve(false); // 確認を出せないなら実行しない
   return new Promise((resolve) => {
     const settle = (yes) => {
       form.removeEventListener("submit", onSubmit);

@@ -462,8 +462,10 @@ test("applyCategorySnapshot: 確定分類は既定チェックにもそのまま
 // （applyCategorySnapshot → carryOverlapSelection → buildOverlapRows）を組んだ
 // ミニ実装で実機の流れを再現する。ここが実機FBの再現テスト本体。
 // 手順を変えたらこのヘルパも合わせること（順序自体が契約の一部）。
-function makeList() {
-  const s = freshOverlapState();
+// openingOverlaps: project-set 時点（プロジェクトを開いた瞬間）の overlaps。
+// 実機と同じく、ここでスナップショットがシードされる（#36 QA）。
+function makeList(openingOverlaps = null) {
+  const s = freshOverlapState(openingOverlaps);
   let rows = [];
   return {
     // 1描画ぶん: サーバ由来の overlaps を受けて行を作る
@@ -500,17 +502,17 @@ function makeList() {
 
 // 改修① 実機FB の再現: 「被りを解消（N秒まで）」を下げると分類が 解消可 → 長尺 に
 // 変わるのに、既定チェックで ON だった行のチェックが残っていた。
-test("シナリオ: 閾値変更で分類が保護側へ変わると、触っていない行のチェックは外れる（#36①）", () => {
-  const list = makeList();
-  // 初期描画（echo 済み）: 2件とも解消可 → 既定 ON
-  let rows = list.render([
-    ov(1, ["a1", "b1"], "resolvable"),
-    ov(21, ["a2", "b2"], "resolvable"),
-  ]);
+// 分類が実際に入れ替わる経路は**プレビューによる確定**（改修② の線引き）なので、
+// ここも confirm() で新分類を通してからチェックの追従を見る。
+test("シナリオ: 分類が保護側へ変わると、触っていない行のチェックは外れる（#36①）", () => {
+  const opening = [ov(1, ["a1", "b1"], "resolvable"), ov(21, ["a2", "b2"], "resolvable")];
+  const list = makeList(opening);
+  // 初期描画: 2件とも解消可 → 既定 ON
+  let rows = list.render(opening);
   assert.deepEqual(rows.map((r) => r.checked), [true, true]);
   assert.deepEqual(toTargetPairs(rows), [["a1", "b1"], ["a2", "b2"]]);
-  // 閾値を下げた → echo で a1|b1 が長尺（保護）へ
-  rows = list.render([
+  // 閾値を下げて プレビュー → a1|b1 が長尺（保護）で確定
+  rows = list.confirm([
     ov(1, ["a1", "b1"], "too_long"),
     ov(21, ["a2", "b2"], "resolvable"),
   ]);
@@ -519,18 +521,16 @@ test("シナリオ: 閾値変更で分類が保護側へ変わると、触って
   assert.equal(list.touchedCount(), 0, "自動追従は touched を作らない");
 });
 
-test("シナリオ: 手で触った行は閾値変更でもユーザー意思のまま（#36①）", () => {
-  const list = makeList();
-  let rows = list.render([
-    ov(1, ["a1", "b1"], "resolvable"),
-    ov(21, ["a2", "b2"], "contained"),
-  ]);
+test("シナリオ: 手で触った行は分類が変わってもユーザー意思のまま（#36①）", () => {
+  const opening = [ov(1, ["a1", "b1"], "resolvable"), ov(21, ["a2", "b2"], "contained")];
+  const list = makeList(opening);
+  let rows = list.render(opening);
   // ユーザーが解消可を外し、相槌を手で入れた
   list.check("a1|b1", false);
   list.check("a2|b2", true);
   assert.equal(list.touchedCount(), 2);
-  // 閾値変更の echo（分類が総入れ替え）でも意思は動かない
-  rows = list.render([
+  // プレビューで分類が総入れ替えされても意思は動かない
+  rows = list.confirm([
     ov(1, ["a1", "b1"], "too_long"),
     ov(21, ["a2", "b2"], "resolvable"),
   ]);
@@ -591,11 +591,11 @@ test("シナリオ: 確認ダイアログ「はい」でチェックが既定へ
   assert.deepEqual(toTargetPairs(rows), [["a1", "b1"]], "既定の内容でプレビューが走る");
 });
 
-test("freshOverlapState: project-set で一時状態が全部捨てられる（#36）", () => {
+test("freshOverlapState: 選択・touched・カーソルは空でリセットされる（#36）", () => {
   const fresh = freshOverlapState();
   assert.equal(fresh.selected.size, 0);
   assert.equal(fresh.touched.size, 0);
-  assert.equal(fresh.snapshot.size, 0);
+  assert.equal(fresh.snapshot.size, 0, "overlaps 未指定なら空スナップショット");
   assert.equal(fresh.cursorIndex, -1);
   // 呼ぶたびに独立したインスタンス（使い回すと世代間で状態が漏れる）
   const other = freshOverlapState();
@@ -605,22 +605,88 @@ test("freshOverlapState: project-set で一時状態が全部捨てられる（#
   assert.equal(fresh.snapshot.size, 0);
 });
 
+// #36 QA（最優先指摘）: 空スナップショットで始めると、プロジェクトを開いて
+// 一度もプレビューせずに閾値を触った場合に限り echo の新分類が素通りし、
+// 「プレビューを押すまで分類は動かない」が**初回だけ成立しない**。
+// project-set で開いた時点の分類をシードして塞ぐ。
+test("freshOverlapState: 開いた時点の分類でスナップショットをシードする（#36 QA）", () => {
+  const fresh = freshOverlapState([
+    ov(1, ["a1", "b1"], "resolvable"),
+    ov(21, ["a2", "b2"], "contained"),
+    ov(41, ["a3", "b3"]), // 分類未導出 → 確定しない（echo で分類が届く余地を残す）
+  ]);
+  assert.equal(fresh.snapshot.get("a1|b1"), "resolvable");
+  assert.equal(fresh.snapshot.get("a2|b2"), "contained");
+  assert.equal(fresh.snapshot.has("a3|b3"), false);
+  // シードしても他の状態は空のまま（リセット契約は変わらない）
+  assert.equal(fresh.selected.size, 0);
+  assert.equal(fresh.touched.size, 0);
+  assert.equal(fresh.cursorIndex, -1);
+  // null / 空でも落ちない
+  assert.equal(freshOverlapState(null).snapshot.size, 0);
+  assert.equal(freshOverlapState([]).snapshot.size, 0);
+});
+
+// #36 QA 再現手順の固定（**この改修の主目的が初回に効くこと**）:
+// プロジェクトを開く → 一度もプレビューしない → 閾値を触る → echo で too_long が届く。
+// 修正前はここで表示分類が変わり、プレビュー起点の確定が初回だけ破れていた。
+test("シナリオ: 開いた直後・プレビュー未実行でも echo で分類が変わらない（#36 QA）", () => {
+  const opening = [ov(1, ["a1", "b1"], "resolvable"), ov(21, ["a2", "b2"], "resolvable")];
+  const list = makeList(opening); // project-set でシード済み
+  let rows = list.render(opening);
+  assert.deepEqual(rows.map((r) => r.category), ["resolvable", "resolvable"]);
+  assert.deepEqual(rows.map((r) => r.checked), [true, true]);
+  // プレビューを一度も押さずに閾値を下げた → echo が保護分類を返してくる
+  rows = list.render([
+    ov(1, ["a1", "b1"], "too_long"),
+    ov(21, ["a2", "b2"], "same_start"),
+  ]);
+  assert.deepEqual(
+    rows.map((r) => r.category),
+    ["resolvable", "resolvable"],
+    "初回でもキーストロークで分類は動かない（ここが QA 最優先指摘の再現点）",
+  );
+  assert.deepEqual(rows.map((r) => r.checked), [true, true], "チェックも動かない");
+  // プレビューを押して初めて確定し直す
+  rows = list.confirm([
+    ov(1, ["a1", "b1"], "too_long"),
+    ov(21, ["a2", "b2"], "same_start"),
+  ]);
+  assert.deepEqual(rows.map((r) => r.category), ["too_long", "same_start"]);
+  assert.deepEqual(rows.map((r) => r.checked), [false, false]);
+});
+
+test("シナリオ: 開いた時点で分類未導出の行は echo の分類を受け取れる（#36 QA）", () => {
+  // シードは「不明」を確定しないので、開いた直後に分類が無かった行は
+  // echo が届いた時点で正しい分類・既定チェックになる（#45 の保証を壊さない）
+  const opening = [ov(1, ["a9", "b9"])];
+  const list = makeList(opening);
+  let rows = list.render(opening);
+  assert.equal(rows[0].category, null);
+  assert.equal(rows[0].checked, false, "分類が届くまでは安全側 OFF");
+  rows = list.render([ov(1, ["a9", "b9"], "resolvable")]);
+  assert.equal(rows[0].category, "resolvable", "シードに無い行は echo の分類を採用");
+  assert.equal(rows[0].checked, true);
+});
+
 test("シナリオ: project-set 後は前プロジェクトの touched・確定分類が残らない（#36）", () => {
-  const list = makeList();
-  list.render([ov(1, ["a1", "b1"], "resolvable")]);
+  const opening = [ov(1, ["a1", "b1"], "resolvable")];
+  const list = makeList(opening);
+  list.render(opening);
   list.check("a1|b1", false);
-  list.confirm([ov(1, ["a1", "b1"], "resolvable")]);
+  list.confirm(opening);
   assert.equal(list.touchedCount(), 1);
-  // project-set 相当: 一時状態を丸ごと入れ替える
+  // project-set 相当: 新プロジェクトの overlaps で一時状態を丸ごと入れ替える
   const s = list.state();
-  const fresh = freshOverlapState();
+  const nextProject = [ov(1, ["a1", "b1"], "contained")];
+  const fresh = freshOverlapState(nextProject);
   s.selected = fresh.selected;
   s.touched = fresh.touched;
   s.snapshot = fresh.snapshot;
-  // 別プロジェクトで**たまたま同じペアキー**が現れても、意思も確定分類も持ち越さない
-  const rows = list.render([ov(1, ["a1", "b1"], "contained")]);
+  // 別プロジェクトで**たまたま同じペアキー**が現れても、意思も前世代の確定分類も持ち越さない
+  const rows = list.render(nextProject);
   assert.equal(list.touchedCount(), 0);
-  assert.equal(rows[0].category, "contained", "確定分類を持ち越さない");
+  assert.equal(rows[0].category, "contained", "前プロジェクトの確定分類を持ち越さない");
   assert.equal(rows[0].checked, false, "前プロジェクトの OFF 意思を持ち越さない");
 });
 
