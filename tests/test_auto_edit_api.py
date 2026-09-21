@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from podcast_prep import server, storage
 from podcast_prep.models import Block, ProjectState
+from podcast_prep.timeline import _classify_overlap, close_gaps
 
 
 def _blk(bid, speaker, start, dur, *, src=None, deleted=False, text=""):
@@ -182,6 +183,202 @@ def test_invalid_thresholds_return_400(tmp_path, monkeypatch, client, payload):
     res = client.post(f"/api/projects/{project.id}/auto_edit", json={**payload, "dry_run": False})
     assert res.status_code == 400
     assert _project_json_bytes(project.id) == before
+
+
+# ------------------------------------------------- Issue #37: max_gap_s の下限
+#
+# close_gaps は detect_silence_gaps(min_gap_s=max_gap_s) で対象を選ぶため、
+# max_gap_s=0 は「すべての無音」を詰める = 冒頭の無音まで消える最も破壊的な編集。
+# close_gaps 自身の検証（max_gap_s < 0 / keep_gap_s > max_gap_s）は 0/0 を通すので
+# 例外を投げず、エンドポイントの except ValueError -> 400 は空振りする。入口で弾く。
+
+
+@pytest.mark.parametrize("max_gap", [0, 0.0, 0.05, 0.099, -1.0])
+def test_max_gap_below_minimum_returns_400(tmp_path, monkeypatch, client, max_gap):
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    before = _project_json_bytes(project.id)
+    res = client.post(
+        f"/api/projects/{project.id}/auto_edit",
+        json={"max_gap_s": max_gap, "keep_gap_s": 0.0, "dry_run": False},
+    )
+    assert res.status_code == 400
+    # 複合述語のまとめた文言ではなく、理由の分かる個別メッセージが返る
+    detail = res.json()["detail"]
+    assert "auto_edit_max_gap_s" in detail
+    assert "0.1 秒以上" in detail
+    assert detail != "invalid auto edit thresholds"
+    # 破壊的編集が走っていない（プロジェクトは一切変わらない）
+    assert _project_json_bytes(project.id) == before
+
+
+def test_max_gap_at_minimum_boundary_is_accepted(tmp_path, monkeypatch, client):
+    """境界 0.1 はそのまま通す（下限を過剰に閉めない）。"""
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    res = client.post(
+        f"/api/projects/{project.id}/auto_edit",
+        json={"max_gap_s": 0.1, "keep_gap_s": 0.0, "tighten_overlaps": False},
+    )
+    assert res.status_code == 200
+
+
+def test_max_gap_below_minimum_from_settings_returns_400(tmp_path, monkeypatch, client):
+    """settings 由来の 0 も同じ検証を通る（payload 省略時のフォールバック経路）。
+
+    coerce_settings には auto_edit_max_gap_s の範囲検証が無いため、古いクライアントや
+    手編集の project.json から 0 が持ち込まれうる。payload に書かなくても弾くこと。
+    """
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    project.settings["auto_edit_max_gap_s"] = 0.0
+    project.settings["auto_edit_keep_gap_s"] = 0.0
+    storage.save_project(project)
+    before = _project_json_bytes(project.id)
+    res = client.post(f"/api/projects/{project.id}/auto_edit", json={"dry_run": False})
+    assert res.status_code == 400
+    assert "auto_edit_max_gap_s" in res.json()["detail"]
+    assert _project_json_bytes(project.id) == before
+
+
+def test_max_gap_zero_is_what_close_gaps_itself_would_not_reject(tmp_path, monkeypatch, client):
+    """入口の下限が唯一の防御であることを固定する（#37 の核心）。
+
+    close_gaps 自身は 0/0 で例外を投げない = エンドポイントの
+    `except ValueError -> 400`（二重防御）は空振りする。純関数を直接叩いて
+    「例外が飛ばず全ギャップが詰まる」ことを確認し、同じ値が API では 400 に
+    なることと対比する。将来この下限を外すと、この編集が素通りする。
+    """
+    # 冒頭の無音 + 短い間（どちらも既定 1.5s では対象外）を含むデータ
+    blocks = [
+        _blk("a1", "A", 1.0, 1.0),   # [0, 1.0) が冒頭の無音
+        _blk("b1", "B", 2.3, 1.0),   # 0.3s の間
+        _blk("a2", "A", 3.6, 1.0),   # 0.3s の間
+    ]
+    # 純関数は 0/0 を例外にしない（= except ValueError -> 400 は空振りする）
+    _tightened, actions = close_gaps(blocks, max_gap_s=0.0, keep_gap_s=0.0)
+    assert len(actions) == 3, "冒頭の無音を含む全ギャップが詰められてしまう"
+    # 既定の閾値なら、これらは1件も対象にならない
+    assert close_gaps(blocks, max_gap_s=1.5, keep_gap_s=0.5)[1] == []
+
+    # 同じ値を API に投げると入口で 400（唯一の防御）
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    before = _project_json_bytes(project.id)
+    res = client.post(
+        f"/api/projects/{project.id}/auto_edit",
+        json={"max_gap_s": 0.0, "keep_gap_s": 0.0, "tighten_overlaps": False, "dry_run": False},
+    )
+    assert res.status_code == 400
+    assert _project_json_bytes(project.id) == before
+
+
+# ------------------------------------------------- Issue #37: 閾値の有限性（NaN / inf）
+#
+# NaN はあらゆる比較が False になるため、複合述語
+# （keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov or ...）を素通りする。
+# 片側の閾値だけ isfinite を掛けても、残りがすり抜けて 200 で通ってしまう。
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "max_gap_s",
+        "keep_gap_s",
+        "max_overlap_s",
+        "keep_overlap_s",
+    ],
+)
+def test_non_finite_thresholds_return_400(tmp_path, monkeypatch, client, key, bad):
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    before = _project_json_bytes(project.id)
+    # JSON に NaN/Infinity を載せる（Python の json はこれらを許容する拡張表記）
+    res = client.post(
+        f"/api/projects/{project.id}/auto_edit",
+        content=json.dumps({key: bad, "dry_run": False}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert res.status_code == 400, f"{key}={bad} が素通りした"
+    assert "有限の数値" in res.json()["detail"]
+    assert _project_json_bytes(project.id) == before
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_min_overlap_s_from_settings_returns_400(tmp_path, monkeypatch, client, bad):
+    """min_overlap_s は settings 由来なので、直す場所が分かるメッセージにする。"""
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    project.settings["min_overlap_s"] = bad
+    storage.save_project(project)
+    res = client.post(f"/api/projects/{project.id}/auto_edit", json={"dry_run": False})
+    assert res.status_code == 400
+    detail = res.json()["detail"]
+    assert "min_overlap_s" in detail, "どの設定値が問題かを示す"
+    assert "被り検出の下限" in detail, "閾値欄ではなく設定側だと分かる文言"
+
+
+def test_non_finite_max_overlap_does_not_disable_too_long_protection(
+    tmp_path, monkeypatch, client
+):
+    """max_overlap_s=NaN で「長い同時発話を自動対象外にする」保護が外れないこと（#37）。
+
+    _classify_overlap の `cur_e_end - cur_l_start > max_overlap_s + EPS` は NaN では
+    常に False になるため、本来 too_long として skip される長大な被りが
+    resolvable に化け、**無警告で自動解消されてしまう**。入口で 400 にして塞ぐ。
+    """
+    nan = float("nan")
+    # 交差長 9s の tail 型被り。通常の閾値 3.0 なら too_long（保護される）
+    assert (
+        _classify_overlap(
+            earlier_start=0.0,
+            later_start=1.0,
+            cur_e_end=10.0,
+            cur_l_start=1.0,
+            cur_l_end=12.0,
+            max_overlap_s=3.0,
+        )
+        == "too_long"
+    )
+    # NaN だと同じ被りが resolvable に化ける = 保護が無効化される
+    assert (
+        _classify_overlap(
+            earlier_start=0.0,
+            later_start=1.0,
+            cur_e_end=10.0,
+            cur_l_start=1.0,
+            cur_l_end=12.0,
+            max_overlap_s=nan,
+        )
+        == "resolvable"
+    ), "NaN は比較を素通りするので保護判定が効かない（この経路を API で塞ぐ）"
+
+    # API はその値を受け付けない（= 保護が外れた状態で適用が走らない）
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    before = _project_json_bytes(project.id)
+    res = client.post(
+        f"/api/projects/{project.id}/auto_edit",
+        content=json.dumps({"max_overlap_s": nan, "dry_run": False}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert res.status_code == 400
+    assert _project_json_bytes(project.id) == before
+
+
+def test_finite_thresholds_still_accepted(tmp_path, monkeypatch, client):
+    """有限な正常値は従来どおり通る（有限性チェックを過剰に閉めていない）。"""
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    res = client.post(
+        f"/api/projects/{project.id}/auto_edit",
+        json={"max_gap_s": 1.5, "keep_gap_s": 0.5, "max_overlap_s": 3.0, "keep_overlap_s": 0.0},
+    )
+    assert res.status_code == 200
+
+
+def test_other_threshold_errors_keep_the_shared_message(tmp_path, monkeypatch, client):
+    """下限チェックを切り出しても、既存の複合述語の文言は変えない（ミラー3箇所を不変に保つ）。"""
+    project = _make_project(tmp_path, monkeypatch, _standard_blocks())
+    res = client.post(
+        f"/api/projects/{project.id}/auto_edit",
+        json={"max_gap_s": 1.0, "keep_gap_s": 2.0},  # keep > max
+    )
+    assert res.status_code == 400
+    assert res.json()["detail"] == "invalid auto edit thresholds"
 
 
 def test_digest_mismatch_returns_409_and_fresh_digest_succeeds(tmp_path, monkeypatch, client):

@@ -2117,6 +2117,78 @@ def _parse_target_pairs(raw: Any) -> set[frozenset[str]] | None:
     return pairs
 
 
+# 無音を詰める判定秒数（max_gap_s）の下限（Issue #37）。
+#
+# なぜ下限が要るか: close_gaps は detect_silence_gaps(min_gap_s=max_gap_s) で対象を
+# 選ぶため、**検出閾値と動作閾値が同一の数値**になっている（被り側の min_overlap_s の
+# ような独立した検出下限が存在しない）。したがって max_gap_s=0 は「0秒超の無音」=
+# **すべての無音**を対象にし、冒頭の無音まで含めて全部詰める。SPEC §自動調整が
+# 「長い無音を詰める」と説明する機能が、最も破壊的な編集に化ける。
+#
+# close_gaps 自身の検証（keep_gap_s < 0 or max_gap_s < 0 / keep_gap_s > max_gap_s）は
+# 0/0 をどちらも通すため例外を投げない = エンドポイントの
+# `except ValueError -> 400`（二重防御）はこの経路では空振りする。入口で弾く必要がある。
+#
+# 値の根拠: 語間のポーズを下回る 0.1 秒。EPS 的な下限（> 1e-6）では 0.001 のような
+# 実質 0 と同じ値を許してしまい、下限として意味を成さない。
+AUTO_EDIT_MIN_MAX_GAP_S = 0.1
+
+
+def _validate_auto_edit_thresholds(
+    max_gap: float, keep_gap: float, max_ov: float, keep_ov: float, min_ov: float
+) -> None:
+    """auto_edit の閾値を検証し、不正なら 400 を投げる（Issue #37）。
+
+    検証は3段。**複合述語（3段目）は一字も変えない**のが要点で、この式はフロント
+    （autoEdit.js の validateAutoEditThresholds）・IMPLEMENTATION_NOTES・
+    tests/js/uiHelpers.test.mjs の3箇所でミラーされている。項を増やすと同期コストが
+    上がるため、新しい条件はすべて手前の独立した if として足す。
+
+    1. 有限性（NaN / ±inf を弾く）… 全5閾値
+    2. max_gap_s の下限（AUTO_EDIT_MIN_MAX_GAP_S）
+    3. 既存の複合述語（keep_gap < 0 / max_gap < keep_gap / max_ov < min_ov /
+       keep_ov の範囲）
+
+    有限性を**全閾値に掛ける**理由: NaN はあらゆる比較が False になるため、片側だけ
+    チェックすると残りが複合述語を素通りして 200 で通る。特に max_overlap_s = NaN は
+    classify_overlap の `交差長 > max_overlap_s + EPS`（timeline.py）が常に False に
+    なり、**「長い同時発話は自動対象外にして保護する」機能が丸ごと無効化される**。
+    長大な被りまで無警告で自動解消される = #37 と同じ「過剰に破壊的な編集が黙って
+    走る」系統なので、入口で閉じる。
+    """
+    # 1. 有限性。payload 由来（ユーザーが直せる）と settings 由来（min_overlap_s。
+    #    UI の「詳細設定（無音判定）」側の値）でメッセージを出し分け、どこを直せば
+    #    よいかが分かるようにする。
+    for name, value in (
+        ("auto_edit_max_gap_s", max_gap),
+        ("auto_edit_keep_gap_s", keep_gap),
+        ("auto_edit_max_overlap_s", max_ov),
+        ("auto_edit_keep_overlap_s", keep_ov),
+    ):
+        if not math.isfinite(value):
+            raise HTTPException(
+                status_code=400, detail=f"{name} には有限の数値を指定してください"
+            )
+    if not math.isfinite(min_ov):
+        # settings 側の値なので、直す場所が auto_edit の閾値欄ではないことを明示する。
+        raise HTTPException(
+            status_code=400,
+            detail="min_overlap_s（被り検出の下限）に有限の数値を設定してください",
+        )
+    # 2. max_gap_s の下限
+    if max_gap < AUTO_EDIT_MIN_MAX_GAP_S:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"auto_edit_max_gap_s は {AUTO_EDIT_MIN_MAX_GAP_S} 秒以上で指定してください"
+                "（0 はすべての無音を詰めます）"
+            ),
+        )
+    # 3. 既存の複合述語（ミラー3箇所と同期。変更しない）
+    if keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov or not (0 <= keep_ov < min_ov):
+        raise HTTPException(status_code=400, detail="invalid auto edit thresholds")
+
+
 @app.post("/api/projects/{project_id}/auto_edit")
 def auto_edit_project(
     project_id: str, payload: dict[str, Any] | None = Body(None)
@@ -2148,8 +2220,9 @@ def auto_edit_project(
     max_ov = _opt("max_overlap_s", "auto_edit_max_overlap_s", 3.0)
     keep_ov = _opt("keep_overlap_s", "auto_edit_keep_overlap_s", 0.0)
     min_ov = float(s.get("min_overlap_s", 0.3))
-    if keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov or not (0 <= keep_ov < min_ov):
-        raise HTTPException(status_code=400, detail="invalid auto edit thresholds")
+    # _opt は payload > settings > default の順で解決済みなので、settings 由来の値
+    # （古いクライアント・手編集の project.json 由来の 0 等）も同じ検証を通る。
+    _validate_auto_edit_thresholds(max_gap, keep_gap, max_ov, keep_ov, min_ov)
     digest = _blocks_digest(project.blocks)
     if p.get("if_blocks_digest") and p["if_blocks_digest"] != digest:
         raise HTTPException(status_code=409, detail="project changed since preview")
