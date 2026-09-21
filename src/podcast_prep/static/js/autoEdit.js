@@ -9,13 +9,29 @@
 // - チェック/閾値変更・任意の編集(blocks-changed)・project-set → 適用ボタン無効化 + ハッチクリア
 // - D: 被り一覧のチェック（panels が所有）を target_pairs として送る。選択が変わったら
 //   overlap-selection-changed でプレビューを無効化する。
-//   閾値 auto_edit_max_overlap_s を変えると category（分類チップ）が変わるため、
-//   閾値変更でも一覧の分類は stale になる（BE1 申し送り2）。適用ボタン無効化と同じ扱い。
+//
+// 【Issue #36】閾値変更は一覧に即時反映しない。分類（category）は**プレビュー/適用の
+// 成功時点で確定**させ（panels.confirmOverlapCategories）、閾値を触っただけでは
+// 一覧の分類ラベルが書き換わらないようにする。旧挙動（350ms デバウンス PUT の echo で
+// 分類が総入れ替え）はキーストロークのたびに結果が出てしまい、プレビューの意味を消していた。
+// 被り区間そのもの（行の増減）は従来どおり即時反映する（panels 側の線引きを参照）。
+//
+// 【Issue #36】確認ダイアログ（#overlapResetDialog）の所有:
+// main.js は autoEdit を import しているため、autoEdit → main の import は循環する。
+// よって「at* 群は autoEdit が持つ」という既存の DOM 所有ルールをそのまま延長し、
+// このダイアログの DOM も autoEdit が直接引く（main への注入も逆参照も作らない）。
+// 判定そのものは shouldConfirmOverlapReset（純関数・テスト対象）に切り出し、
+// importFlow.js / overlayGate.js と同じ「規則は純関数・DOM は端で」の流儀に揃えている。
 
 import { state, emit, on } from "./state.js";
 import { runAutoEdit, saveSoon } from "./persistence.js";
 import { setPreviewRegions } from "./waveform.js";
-import { getSelectedTargetPairs } from "./panels.js";
+import {
+  getSelectedTargetPairs,
+  hasTouchedOverlaps,
+  clearOverlapTouched,
+  confirmOverlapCategories,
+} from "./panels.js";
 
 // 契約 §A の settings 既定値（settings 未設定の旧プロジェクト用フォールバック）
 const DEFAULTS = { max_gap_s: 1.5, keep_gap_s: 0.5, max_overlap_s: 3.0 };
@@ -43,6 +59,9 @@ export function initAutoEdit(elements) {
     summary: document.getElementById("atSummary"),
     gapError: document.getElementById("atGapError"),
     maxOvError: document.getElementById("atMaxOvError"),
+    // Issue #36: 被り一覧のチェックを手で変更した後のプレビュー確認
+    resetDialog: document.getElementById("overlapResetDialog"),
+    resetForm: document.getElementById("overlapResetForm"),
   };
   els.preview.addEventListener("click", () => {
     void preview();
@@ -74,14 +93,31 @@ export function initAutoEdit(elements) {
 // 閾値入力: settings.auto_edit_* へ書いて saveSoon（既存 setTrackField と同じ永続化パターン）
 function bindThreshold(input, settingsKey) {
   input.addEventListener("input", () => {
-    const value = Number(input.value);
-    if (state.project?.settings && Number.isFinite(value)) {
+    const value = parseThresholdInput(input.value);
+    if (state.project?.settings && value !== null) {
       state.project.settings[settingsKey] = value;
       saveSoon();
     }
     invalidatePreview();
     renderThresholdErrors(); // 入力のたびにインライン検証を更新（直れば即消える）
   });
+}
+
+// 閾値入力欄の値 → settings へ書いてよい数値 / 書いてはいけない null（純関数・テスト対象）。
+//
+// Issue #36 の補足バグ: 旧実装は `Number(input.value)` をそのまま Number.isFinite に
+// 掛けていたため、**入力欄を空にした瞬間** `Number("") === 0` が検証を通過し
+// settings に 0 が保存されてサーバへ飛んでいた。サーバ側では max_ov < min_ov となり
+// classify_overlaps が ValueError → 分類を放棄し、被り一覧が全行「不明」に化ける。
+// （空白のみ・"abc" 等も同じ穴。Number(" ") も 0 になる）
+// 空文字・空白のみ・数値にならない入力では settings を更新しない = 直前の妥当な値が残る。
+// インライン赤字（renderThresholdErrors）は入力欄の生値を見るので従来どおり出る。
+export function parseThresholdInput(raw) {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (typeof raw !== "string") return null;
+  if (raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
 }
 
 // project-set 時に settings から閾値欄を初期化（未設定は契約既定値）
@@ -159,16 +195,76 @@ function renderPreview(data) {
   els.apply.disabled = !(data.summary && data.summary.would_change);
 }
 
+// Issue #36: プレビュー前に確認ダイアログを出すべきか（純関数・テスト対象）。
+// 出す条件は「ユーザーが被り一覧のチェックを手で変更している」の一点だけ。
+// 触っていなければ失われるものが無いので、従来どおり無確認で即プレビューする。
+export function shouldConfirmOverlapReset(touched) {
+  return !!touched;
+}
+
+// Issue #36: 確認ダイアログの submitter.value → 判断（純関数・テスト対象。
+// workdirConflictChoice と同じ「安全側フォールバック」の流儀）。
+// 「はい」= value "yes" のみ真。未知値・空・undefined（Esc で submitter が無い）は
+// すべて「いいえ」= 実行しない側に倒す（他ダイアログの値が紛れても勝手に実行しない）。
+export function overlapResetChoice(submitterValue) {
+  return submitterValue === "yes";
+}
+
+// Issue #36: 確認ダイアログを Promise で包む（closeProjectDialog /
+// exportOverwriteDialog と同じ流儀。ネイティブ confirm() は使わない）。
+// dialog / form を引数で受けるのはテスト可能性のため（DOM 要素形の最小スタブを渡せる）。
+// - returnValue ではなく event.submitter?.value を読む（form の submit ボタン値が正）
+// - Esc（cancel イベント）は「いいえ」扱い
+// - settle で submit / cancel 両方のリスナーを必ず外す（片方だけ once にすると
+//   次回表示時に前回の残骸が発火する）
+export function awaitOverlapResetChoice(dialog, form) {
+  if (!dialog || !form) return Promise.resolve(true); // ダイアログ未設置の環境は従来挙動
+  return new Promise((resolve) => {
+    const settle = (yes) => {
+      form.removeEventListener("submit", onSubmit);
+      dialog.removeEventListener("cancel", onCancel);
+      resolve(yes);
+    };
+    const onSubmit = (event) => settle(overlapResetChoice(event.submitter?.value));
+    const onCancel = () => settle(false);
+    form.addEventListener("submit", onSubmit);
+    dialog.addEventListener("cancel", onCancel);
+    dialog.showModal();
+  });
+}
+
+function confirmOverlapReset() {
+  return awaitOverlapResetChoice(els.resetDialog, els.resetForm);
+}
+
 async function preview() {
   if (busy || !ready()) return;
   if (!renderThresholdErrors()) return; // 不正閾値は送信しない（インライン赤字で提示済み）
+  // Issue #36: 手でチェックを変えた後のプレビューは、その変更が解除されることを先に伝える。
+  // busy を先に立ててからダイアログを開く（await 中の再入 = showModal の二重呼びを防ぐ。
+  // importFlow.js の busy ガードと同じ役割）。
   setBusy(true);
-  const version = state.editVersion;
   try {
+    if (shouldConfirmOverlapReset(hasTouchedOverlaps())) {
+      const proceed = await confirmOverlapReset();
+      if (!proceed) return; // いいえ = 何もしない（トーストも出さない）
+      if (!ready()) return; // ダイアログを待っている間にプロジェクトが変わった
+    }
+    // 「はい」= チェックを既定（分類由来）へ戻してから、その内容でプレビューする。
+    // clearOverlapTouched → renderOverlaps で行が再評価されるので、この後に読む
+    // currentOpts() の target_pairs は既定チェックの結果になる。
+    clearOverlapTouched();
+    // ダイアログ表示中も閾値欄は編集できる（モーダルの外ではあるが state は動く）ため、
+    // 送信直前にもう一度ゲートを通す。不正閾値を送るとサーバ 400 の生メッセージが出る。
+    if (!renderThresholdErrors()) return;
+    const version = state.editVersion;
     const data = await runAutoEdit({ ...currentOpts(), dry_run: true });
     // 実行中に編集が入った場合は古いプレビューを描かない（適用は digest 409 が防ぐ）
     if (state.editVersion !== version || !state.project) return;
     renderPreview(data);
+    // Issue #36: このプレビューで見えている分類を確定させる。以降、閾値変更の echo が
+    // 届いても一覧の分類ラベルはここで確定した値のまま（プレビュー起点の確定）。
+    confirmOverlapCategories();
   } catch (err) {
     toast(`自動編集プレビュー失敗: ${err.message}`, 8000);
   } finally {
@@ -187,10 +283,16 @@ async function apply() {
     if (data.dry_run) {
       // 409 "changed since preview" → persistence が自動再プレビューした応答
       if (state.editVersion === version) renderPreview(data);
+      // 再プレビューも「プレビュー成功」なので分類を確定し直す（#36）
+      confirmOverlapCategories();
       toast("プロジェクトが変わっていたため再プレビューしました");
     } else if (data.applied) {
       // pushHistory → adoptBlocksFrom は persistence 側で完了済み（追加PUTなし・⌘Zで一括Undo）。
       // adoptBlocksFrom の blocks-changed で本モジュールのハッチ/summary はクリア済み。
+      // Issue #36: 適用後の overlaps（adoptBlocksFrom がサーバ応答で差し替え済み）で
+      // 分類を確定し直す。適用で被りが解消され一覧の顔ぶれ自体が変わっているため、
+      // 古いスナップショットを残すと消えたペアの分類を抱え続けることになる。
+      confirmOverlapCategories();
       const summary = data.summary || {};
       toast(
         `自動調整を適用: 無音 ${summary.gaps_closed ?? 0}件 / 被り ${summary.overlaps_resolved ?? 0}件`,

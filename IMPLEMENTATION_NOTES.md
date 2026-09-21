@@ -50,6 +50,51 @@
 - **pause / resume**: `pausedAt` は聴感位置（⏸ でヘッドが指す場所 = 聞こえていた場所）。resume はその値を `posAtStart` にして新規スケジュールするため**エンジン位置への逆変換は不要** — 送信済み・未再生だったレイテンシ分は聞こえていた位置から鳴り直される。編集中の再スケジュール（notifyBlocksChanged）も同じ判断で聴感位置起点。
 - **スコープ**: 表示クロックのみ。fetch 遅延の先頭トリム（scheduleSegment の offsetS）は従来どおり正しく、エクスポート・サーバには影響しない。シーク（絶対時刻指定）にはエンジン/聴感の区別が生じない。
 
+## 被り一覧の「touched」分離と分類スナップショット（Issue #36）
+
+被り一覧（`static/js/panels.js`）は永続化しないフロントの一時状態を持つ。実機フィードバックで
+「閾値を変えると分類は変わるのにチェックが残る」「秒数を打った瞬間に結果が出てプレビューの
+意味がない」の2点が出たため、状態の持ち方を次のように設計し直した。
+
+- **`touchedPairs`（意思と既定の分離）**: 旧実装は `seenPairs`（= 一度でも描画して既定チェックの
+  判断を確定したペア）を持ち、「既知なら選択集合を尊重」していた。これは**ユーザーが手で操作した**
+  ことと**既定チェックを注入した**ことを同一視しており、分類が「解消可 → 長尺」に変わっても
+  既定で入れた ON が意思として残り続けた（保護対象が自動編集の対象に混ざる）。
+  新実装は `touchedPairs`（`setRowChecked` / `setAllChecked` / キーボードの toggle が刻む）だけを
+  意思として扱い、**touched でない行は描画のたびに `defaultChecked(overlap)` で再評価する**。
+  `seenPairs` と `selectionSeeded` は廃止した — 「判断が確定済みか」という概念は
+  「ユーザーが触ったか」に吸収され、Issue #45 が守っていた性質（一時消滅ペアの記録保持 /
+  分類未導出の行をユーザーが触ったときの意思保護）はすべて `touchedPairs` 側で成立する。
+  `carryOverlapSelection`（分割等で block_id が変わったペアへの引き継ぎ）も **touched な旧ペア
+  からだけ**引き継ぐ。既定チェックは意思ではないので、新ペアの分類から導出し直すのが正しい。
+- **`categorySnapshot`（プレビュー起点の確定）**: 閾値入力 → `saveSoon()` の 350ms デバウンス PUT →
+  サーバが新閾値で `classify_overlaps` → echo で `state.project.overlaps` 総入れ替え、という経路が
+  あるため、キーストロークのたびに分類チップが書き換わっていた。**分類ラベル（`category`）だけ**を
+  `pairKey → category` の Map で確定値として保持し、描画時に `applyCategorySnapshot` でかぶせる。
+  - 固定するのは分類だけ。**被り区間そのもの（start/end/block_ids による行の増減）は即時反映**する
+    （区間は編集の結果であって閾値の関数ではないため、止めると一覧が実データと乖離する）。
+  - スナップショットに無いペア（編集で新しく現れた被り）はサーバの分類をそのまま採用する。
+  - 確定のトリガはプレビュー成功・適用成功（`autoEdit` が `confirmOverlapCategories()` を呼ぶ）。
+  - `state.project.overlaps` は**書き換えない**。かぶせるのは描画側だけで、生データは次の確定で
+    本物の分類へ戻れる状態に保つ（`timelineModel.recomputeOverlapsSweep` のローカル分類引き継ぎも
+    生データを読むので、スナップショットと干渉しない）。
+  - `confirmOverlapCategories()` が元にするのは表示中の行ではなく `state.project.overlaps`。
+    `runAutoEdit` は冒頭で `flushSave()` するため、応答が返る頃には新閾値の echo が state に届いて
+    いる。ここで表示中の行を読むと古いスナップショットを確定し直すだけになる。
+- **リセット**: 上記2つと選択集合・カーソルは `freshOverlapState()` に一点集約し、`project-set` が
+  丸ごと入れ替える（状態を増やすたびに購読側へ手で足すと、前プロジェクトの記録が漏れる）。
+- **確認ダイアログの配置**: `#overlapResetDialog` の DOM は `autoEdit.js` が直接引く。`main.js` は
+  `autoEdit` を import しているため `autoEdit → main` は循環する。既存の「`at*` 群は autoEdit が
+  所有する」DOM 所有ルールをそのまま延長した形。判定（`shouldConfirmOverlapReset` /
+  `overlapResetChoice`）と Promise ラッパ（`awaitOverlapResetChoice`）は引数で DOM を受ける純関数・
+  準純関数として切り出してあり、`importFlow.js` / `overlayGate.js` と同じ「規則は純関数・DOM は端で」
+  の流儀に揃えている。多重起動は `preview()` の `busy` フラグが `showModal` の前に立つ。
+- **補足バグ（同時修正）**: 閾値入力欄を空にすると `Number("") === 0` が `Number.isFinite` を通過し、
+  settings に 0 が保存されてサーバへ飛んでいた。サーバ側で `max_ov < min_ov` となり
+  `classify_overlaps` が ValueError → 分類を放棄して一覧が**全行「不明」**に化ける。
+  `parseThresholdInput` を挟み、空文字・空白のみ・数値にならない入力では settings を更新しない
+  （インライン赤字の表示は入力欄の生値を見るので従来どおり出る）。
+
 ## 検証
 
 CI（`.github/workflows/ci.yml`）と同じ手順をローカルで実行できる:

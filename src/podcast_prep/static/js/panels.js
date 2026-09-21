@@ -16,6 +16,14 @@
 // 【被り選択の所有権】チェック状態（selectedPairs）は panels が持ち、autoEdit が
 // getSelectedTargetPairs() で読む。autoEdit → panels の一方向参照で循環しない
 // （panels は autoEdit を import しない）。永続化しないフロントの一時状態。
+//
+// 【Issue #36】上記と同じ所有権で2つの一時状態を持つ:
+// - touchedPairs: ユーザーが明示的にチェックを操作したペア。触っていない行は
+//   常に分類（category）から既定チェックを再評価する = 閾値変更で分類が変われば追従する。
+// - categorySnapshot: プレビュー/適用で確定した分類。閾値を変えただけでは一覧の
+//   分類ラベルを書き換えない（プレビュー起点で確定させる）。
+// autoEdit は hasTouchedOverlaps() / clearOverlapTouched() / confirmOverlapCategories()
+// で読み書きする（引き続き一方向参照）。
 
 import { state, on, emit, beginJob, endJob, isJobBusy } from "./state.js";
 import {
@@ -49,9 +57,12 @@ let endCache = { project: null, version: -1, value: 0 };
 // ── 被り一覧の一時状態（project.json には保存しない） ──
 let overlapRows = [];          // 描画中の行データ [{overlap, key, category, checked}]
 let selectedPairs = new Set(); // チェック済みペアの key（"a|b" 正規化済み）
-let seenPairs = new Set();     // 既定チェックの判断を確定済みのペア（Issue #45: 現存ペアに
-                               // 絞らず世代内で保持。分類未導出の初見ペアは未確定のまま）
-let selectionSeeded = false;   // このプロジェクト世代で既定チェックを注入済みか
+let touchedPairs = new Set();  // ユーザーが明示的にチェックを操作したペア（Issue #36）。
+                               // 触っていないペアは常に分類から既定チェックを再評価する。
+                               // Issue #45 の「現存ペアに絞らない」原則はここが引き継ぐ:
+                               // 頭出し等でペアが一時的に消えても記録を残し、復活時に意思を復元する。
+let categorySnapshot = new Map(); // Issue #36: プレビュー/適用で確定した分類（pairKey → category）。
+                               // 閾値を変えただけの echo では一覧の分類ラベルを書き換えない。
 let cursorIndex = -1;          // Prev/Next の現在位置（overlapRows のindex）
 // 後がけ正規化ジョブの多重起動ガードは state（beginJob/endJob）が正（#57 QA の根因対応）。
 // 従来はここのローカル変数だけで持っており、main の jobBusy が立たないため正規化中でも
@@ -235,11 +246,12 @@ function bindLoudnormOption(input, settingsKey) {
 function subscribe() {
   on("project-set", () => {
     playerDisabled = false;
-    // 新しいプロジェクト世代: 被り選択と Prev/Next カーソルをリセットし、既定チェックを再注入
-    selectedPairs = new Set();
-    seenPairs = new Set();
-    selectionSeeded = false;
-    cursorIndex = -1;
+    // 新しいプロジェクト世代: 被り一覧の一時状態を丸ごと捨てて既定チェックを再注入
+    const fresh = freshOverlapState();
+    selectedPairs = fresh.selected;
+    touchedPairs = fresh.touched;
+    categorySnapshot = fresh.snapshot;
+    cursorIndex = fresh.cursorIndex;
     lastExport = null; // 前プロジェクトの出力先を新プロジェクトの結果として見せない
     renderAll();
   });
@@ -252,9 +264,12 @@ function subscribe() {
     pushGains(); // Undo/Redo で gain_db が戻ったときの player 追従
   });
   on("selection-changed", renderSelected);
-  // PUT echo でサーバ導出の overlap.category が反映されたら分類チップを描き直す
+  // PUT echo でサーバ導出の overlaps が反映されたら被り一覧を描き直す
   // （Issue #20 実機FB。overlaps の中身だけの更新なので被り一覧のみ再描画。
   //   renderOverlaps は選択・カーソルを保持し、スクロールもしない）
+  // Issue #36: ここで反映するのは**区間（行の増減）まで**。分類ラベルは確定済み
+  // スナップショットがあればそちらが勝つ（renderOverlaps の applyCategorySnapshot）。
+  // 閾値をキーストロークするたびに分類が書き換わる旧挙動を止めるのがこの線引き。
   on("overlaps-merged", renderOverlaps);
   on("zoom-changed", () => {
     if (els.zoom && els.zoom !== document.activeElement) els.zoom.value = String(state.zoom);
@@ -315,6 +330,20 @@ const UNKNOWN_CATEGORY = { label: "不明", className: "ov-cat unknown", protect
 
 export function categoryInfo(category) {
   return OVERLAP_CATEGORIES[category] || UNKNOWN_CATEGORY;
+}
+
+// プロジェクト世代ごとにリセットする被り一覧の一時状態（純関数・テスト対象）。
+// project-set の購読がこれで全部入れ替える。**リセット漏れを作らないための一点管理**:
+// 状態を増やすたびに購読側へ手で足していくと、前プロジェクトの「触った」記録や
+// 確定分類が新プロジェクトへ漏れる（別素材のペアキーがたまたま一致すると、
+// 触ってもいない行がユーザー意思扱いで固定される）。
+export function freshOverlapState() {
+  return {
+    selected: new Set(),  // チェック済みペア
+    touched: new Set(),   // ユーザーが明示的に操作したペア（Issue #36）
+    snapshot: new Map(),  // プレビュー/適用で確定した分類（Issue #36）
+    cursorIndex: -1,      // Prev/Next のカーソル
+  };
 }
 
 // block_ids ペアの正規化キー（順不同 → ソートして "|" 連結）。純関数・テスト対象。
@@ -393,82 +422,128 @@ export function overlapKeyAction(key) {
   }
 }
 
+// ── Issue #36: 分類スナップショット（プレビュー/適用で確定した category） ──
+//
+// なぜ必要か（実機FB）: 閾値「被りを解消（N秒まで）」を触ると 350ms 後の PUT echo で
+// サーバ導出の category が総入れ替えされ、キーストロークのたびに一覧の分類ラベルが
+// 書き換わる。プレビューを押す前に結果が出てしまい、プレビューの意味が無くなっていた。
+//
+// 何をスナップショットするか（範囲の線引きが要点）:
+// - **分類ラベル（category）だけ**を確定値で固定する。
+// - 被り区間そのもの（start/end/block_ids による行の増減）は従来どおり即時反映する。
+//   区間は編集の結果であって閾値の関数ではないため、止めると一覧が実データと乖離する。
+// - スナップショットに無いペア（編集で新しく現れた被り）はサーバの category をそのまま
+//   採用する。閾値変更由来ではないので確定値と矛盾しない。
+
+// overlaps へスナップショットの分類をかぶせる（純関数・テスト対象）。
+// 元配列・要素は変更せず、category が違う行だけ浅いコピーを作って返す。
+export function applyCategorySnapshot(overlaps, snapshot) {
+  const list = overlaps || [];
+  if (!snapshot || snapshot.size === 0) return list;
+  return list.map((overlap) => {
+    const key = pairKey(overlap.block_ids);
+    if (key === null || !snapshot.has(key)) return overlap;
+    const category = snapshot.get(key);
+    if ((overlap.category ?? null) === (category ?? null)) return overlap;
+    const next = { ...overlap };
+    if (category == null) delete next.category;
+    else next.category = category;
+    return next;
+  });
+}
+
+// 表示中の overlaps から分類スナップショットを作る（純関数・テスト対象）。
+// プレビュー成功 / 適用成功の時点で呼び、そのとき見えている分類で確定させる。
+// 分類未導出（category 欠損 = 「不明」）の行は**確定しない**: 確定すると echo で
+// 分類が届いても永久に「不明」で固定され、既定チェックが一生効かなくなる（#45 と同じ罠）。
+export function buildCategorySnapshot(overlaps) {
+  const snapshot = new Map();
+  for (const overlap of overlaps || []) {
+    const key = pairKey(overlap.block_ids);
+    const category = overlap?.category ?? null;
+    if (key === null || category === null) continue;
+    snapshot.set(key, category);
+  }
+  return snapshot;
+}
+
 // overlaps + 既存選択 → 描画用の行データ（純関数・テスト対象）。
 //
-// seeded=false（プロジェクト世代の初回描画）: 全行に既定チェックを適用する。
-// seeded=true（編集後の再描画）: 既に見たペアはユーザーの選択を尊重し、
-//   **初めて現れたペア**（編集で新しく生まれた被り）だけ既定チェックを適用する。
-//   ここで一律 selected.has(key) にすると、新規の被りが常に未チェックで現れて
-//   「解消可なのに適用されない」取りこぼしになる。
-// seen は「既定チェックの判断を確定済みのペア」の集合。
+// Issue #36 の中心: チェックの由来を2つに分ける。
+// - touched（ユーザーが明示的に操作したペア）: `selected.has(key)` を尊重する = ユーザー意思。
+// - それ以外: **毎回 defaultChecked(overlap) で再評価する**。閾値変更や echo で分類が
+//   「解消可 → 長尺」に変われば、触っていない行のチェックは自動的に外れる。
+//   旧実装は「一度でも描画した（seen）」を意思と同一視していたため、分類が保護側へ
+//   変わってもチェックが残り、保護対象が自動編集の対象に混ざっていた。
 //
-// ペアキー永続の2原則（Issue #45。破ると頭出し・分割でチェックが全て外れる）:
-// - 返り値の nextSelected / nextSeen は**現存ペアに絞らない**（selected/seen を包含）。
-//   頭出しのオーバーシュート→戻し等でペアが一時的に消えても記録を保持し、
-//   復活時にユーザーの選択を復元する（消えたままのペアの記録は project-set で消える）。
-// - category 未導出（ローカルスイープ直後・サーバ echo 前）の初見ペアは seen に
-//   **刻まない**。ここで刻むと echo で分類が届いても「既知・未選択」に固定され、
-//   既定チェック（resolvable=ON）が一生効かなくなる。判断は分類が届いた描画まで保留する。
-export function buildOverlapRows(overlaps, selected, seeded, seen = null) {
+// ペアキー永続の原則（Issue #45。破ると頭出し・分割でチェックが全て外れる）:
+// 返り値の nextSelected は**現存ペアに絞らない**（selected を包含）。頭出しの
+// オーバーシュート→戻し等でペアが一時的に消えても記録を保持し、復活時に復元する
+// （消えたままのペアの記録は project-set で消える）。touched も同じ扱い（呼び出し側で保持）。
+export function buildOverlapRows(overlaps, selected, touched = null) {
   const rows = [];
   const nextSelected = new Set(selected || []);
-  const nextSeen = new Set(seen || []);
   for (const overlap of overlaps || []) {
     const key = pairKey(overlap.block_ids);
     const category = overlap.category ?? null;
-    const known = seeded && seen !== null && seen.has(key);
+    const isTouched = key !== null && !!touched && touched.has(key);
     const checked = key === null
       ? false
-      : known
-        ? selected.has(key)
+      : isTouched
+        ? nextSelected.has(key)
         : defaultChecked(overlap);
     if (key !== null) {
-      if (known || category !== null) nextSeen.add(key);
       if (checked) nextSelected.add(key);
+      else if (!isTouched) nextSelected.delete(key); // 分類が保護側へ変わったら選択も落とす
     }
     rows.push({ overlap, key, category, checked });
   }
-  return { rows, nextSelected, nextSeen };
+  return { rows, nextSelected };
 }
 
 // ユーザーのチェック操作を選択集合へ反映する（純関数寄り・テスト対象。Set を直接更新）。
-// seen にも必ず刻む: 分類未導出（「不明」表示中）の行をユーザーが操作した場合、
-// ここで確定させないと echo 到着時の既定チェックがユーザーの意思を上書きしてしまう。
-export function applySelection(selected, seen, key, checked) {
+// touched に必ず刻む: これ以降このペアは分類変更に追従せず、ユーザーの意思が勝つ。
+// 分類未導出（「不明」表示中）の行を操作した場合も同じで、echo 到着時の既定チェックに
+// 上書きされない（Issue #45 の保証を touched が引き継ぐ）。
+export function applySelection(selected, touched, key, checked) {
   if (!key) return false;
-  seen.add(key);
+  touched.add(key);
   if (checked) selected.add(key);
   else selected.delete(key);
   return true;
 }
 
-// 分割等でブロックIDが変わったペアへチェック・既知記録を引き継ぐ（純関数・テスト対象）。
-// Issue #45（43b5b09 の分類引き継ぎと同じ考え方をチェック状態に適用）:
-// 初見ペアのうち「既知の旧ペアと片方のブロックIDを共有し、区間が交差する」ものは
-// 旧ペアの判断（seen + 選択状態）を引き継ぐ。無関係な新規ペア（ID共有なし・区間
-// 非交差）には波及させず、通常の既定チェック経路（buildOverlapRows）に委ねる。
+// 分割等でブロックIDが変わったペアへ**ユーザー操作の記録**を引き継ぐ（純関数・テスト対象）。
+// Issue #45（43b5b09 の分類引き継ぎと同じ考え方）+ Issue #36（引き継ぐのは意思だけ）:
+// 初見ペアのうち「**touched な**旧ペアと片方のブロックIDを共有し、区間が交差する」ものは
+// 旧ペアの意思（touched + 選択状態）を引き継ぐ。
+// touched でない旧ペアからは引き継がない — その行のチェックはユーザーの意思ではなく
+// 分類から導出された既定値なので、新ペアでも新しい分類から導出し直すのが正しい
+// （buildOverlapRows の既定チェック経路に委ねる）。無関係な新規ペア（ID共有なし・
+// 区間非交差）にも従来どおり波及させない。
 // prevRows は直前描画の行データ（renderOverlaps が保持する overlapRows）。
-export function carryOverlapSelection(prevRows, overlaps, selected, seen) {
+export function carryOverlapSelection(prevRows, overlaps, selected, touched) {
   const nextSelected = new Set(selected || []);
-  const nextSeen = new Set(seen || []);
+  const nextTouched = new Set(touched || []);
   if (!prevRows || prevRows.length === 0) {
-    return { selected: nextSelected, seen: nextSeen };
+    return { selected: nextSelected, touched: nextTouched };
   }
   for (const overlap of overlaps || []) {
     const key = pairKey(overlap.block_ids);
-    if (key === null || nextSeen.has(key)) continue; // 既知ペアは引き継ぎ不要
+    if (key === null || nextTouched.has(key)) continue; // 既に意思があるペアは引き継ぎ不要
     const ids = new Set(overlap.block_ids);
     for (const prev of prevRows) {
-      if (!prev.key || prev.key === key || !nextSeen.has(prev.key)) continue;
+      if (!prev.key || prev.key === key || !nextTouched.has(prev.key)) continue;
       const sharesBlock = (prev.overlap.block_ids || []).some((id) => ids.has(id));
       const intersects = prev.overlap.start < overlap.end && overlap.start < prev.overlap.end;
       if (!sharesBlock || !intersects) continue;
-      nextSeen.add(key);
+      nextTouched.add(key);
       if (nextSelected.has(prev.key)) nextSelected.add(key);
+      else nextSelected.delete(key);
       break;
     }
   }
-  return { selected: nextSelected, seen: nextSeen };
+  return { selected: nextSelected, touched: nextTouched };
 }
 
 // 選択中ペア → auto_edit の target_pairs（[[a,b], ...]）。純関数・テスト対象。
@@ -486,19 +561,50 @@ export function getSelectedTargetPairs() {
   return toTargetPairs(overlapRows);
 }
 
+// ── Issue #36: autoEdit が使う公開API（panels → autoEdit の逆参照は作らない） ──
+
+// ユーザーが被り一覧のチェックを手で変更したか（プレビュー前の確認ダイアログの判定）。
+export function hasTouchedOverlaps() {
+  return touchedPairs.size > 0;
+}
+
+// touched をクリアして一覧を既定（分類由来）へ戻す。プレビュー実行時に呼ぶ
+// （「被り一覧の変更が解除されますが…」に「はい」と答えた結果をここで実行する）。
+export function clearOverlapTouched() {
+  if (touchedPairs.size === 0) return;
+  touchedPairs = new Set();
+  if (els) renderOverlaps(); // initPanels 前（テスト・部分起動）は再描画しない
+  emit("overlap-selection-changed");
+}
+
+// 分類を確定させる（プレビュー成功時・適用成功時に autoEdit が呼ぶ）。
+// 以降、閾値変更の echo が届いてもこの分類でラベルを表示し続ける。
+//
+// 元にするのは **state.project.overlaps（サーバ由来の生データ）** であって、
+// スナップショットをかぶせた overlapRows ではない。runAutoEdit は冒頭で flushSave()
+// するため、プレビュー応答が返る頃には新しい閾値で分類し直した PUT echo が
+// state へ届いている。ここで overlapRows を読むと**古いスナップショットを確定し直す**
+// だけになり、プレビューを押しても分類が更新されない（＝改修の主目的が死ぬ）。
+export function confirmOverlapCategories() {
+  categorySnapshot = buildCategorySnapshot(state.project?.overlaps || []);
+  if (els) renderOverlaps(); // initPanels 前（テスト・部分起動）は再描画しない
+}
+
 function renderOverlaps() {
   const container = els.overlaps;
-  const overlaps = state.project?.overlaps || [];
+  // Issue #36: 区間は state のまま即時反映し、分類ラベルだけ確定値で上書きする。
+  // state.project.overlaps は書き換えない（サーバ由来の生データを壊さない = 次の
+  // プレビューで確定し直すときに本物の分類へ戻れる）。
+  const overlaps = applyCategorySnapshot(state.project?.overlaps || [], categorySnapshot);
   els.overlapCount.textContent = String(overlaps.length);
   els.overlapCount.classList.toggle("alert", overlaps.length > 0);
 
-  // 分割等のID変化ペアへ先にチェックを引き継いでから行を構築する（Issue #45）
-  const carried = carryOverlapSelection(overlapRows, overlaps, selectedPairs, seenPairs);
-  const built = buildOverlapRows(overlaps, carried.selected, selectionSeeded, carried.seen);
+  // 分割等のID変化ペアへ先にユーザー操作の記録を引き継いでから行を構築する（Issue #45/#36）
+  const carried = carryOverlapSelection(overlapRows, overlaps, selectedPairs, touchedPairs);
+  const built = buildOverlapRows(overlaps, carried.selected, carried.touched);
   overlapRows = built.rows;
   selectedPairs = built.nextSelected;
-  seenPairs = built.nextSeen;
-  if (overlaps.length > 0) selectionSeeded = true;
+  touchedPairs = carried.touched;
   if (cursorIndex >= overlapRows.length) cursorIndex = -1;
 
   renderOverlapSummary();
@@ -566,7 +672,7 @@ function setRowChecked(index, checked) {
   const row = overlapRows[index];
   if (!row || !row.key) return;
   row.checked = checked;
-  applySelection(selectedPairs, seenPairs, row.key, checked);
+  applySelection(selectedPairs, touchedPairs, row.key, checked);
   renderOverlapSummary();
   emit("overlap-selection-changed"); // autoEdit がプレビューを無効化する
 }
@@ -576,7 +682,7 @@ function setAllChecked(checked) {
     const row = overlapRows[i];
     if (!row.key) continue;
     row.checked = checked;
-    applySelection(selectedPairs, seenPairs, row.key, checked);
+    applySelection(selectedPairs, touchedPairs, row.key, checked);
   }
   for (const box of els.overlaps.querySelectorAll(".ov-check")) {
     if (!box.disabled) box.checked = checked;
