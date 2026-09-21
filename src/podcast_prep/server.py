@@ -2139,13 +2139,44 @@ def _validate_auto_edit_thresholds(
 ) -> None:
     """auto_edit の閾値を検証し、不正なら 400 を投げる（Issue #37）。
 
-    max_gap_s の下限だけを**個別のメッセージ**で返し、残りは従来どおり複合述語の
-    まとめた1メッセージにする。複合述語の側はフロント
+    検証は3段。**複合述語（3段目）は一字も変えない**のが要点で、この式はフロント
     （autoEdit.js の validateAutoEditThresholds）・IMPLEMENTATION_NOTES・
-    tests/js/uiHelpers.test.mjs の3箇所でミラーされているため、項を増やすと
-    同期コストが上がる。下限チェックを外に出すことでミラーの式は不変に保つ。
+    tests/js/uiHelpers.test.mjs の3箇所でミラーされている。項を増やすと同期コストが
+    上がるため、新しい条件はすべて手前の独立した if として足す。
+
+    1. 有限性（NaN / ±inf を弾く）… 全5閾値
+    2. max_gap_s の下限（AUTO_EDIT_MIN_MAX_GAP_S）
+    3. 既存の複合述語（keep_gap < 0 / max_gap < keep_gap / max_ov < min_ov /
+       keep_ov の範囲）
+
+    有限性を**全閾値に掛ける**理由: NaN はあらゆる比較が False になるため、片側だけ
+    チェックすると残りが複合述語を素通りして 200 で通る。特に max_overlap_s = NaN は
+    classify_overlap の `交差長 > max_overlap_s + EPS`（timeline.py）が常に False に
+    なり、**「長い同時発話は自動対象外にして保護する」機能が丸ごと無効化される**。
+    長大な被りまで無警告で自動解消される = #37 と同じ「過剰に破壊的な編集が黙って
+    走る」系統なので、入口で閉じる。
     """
-    if not math.isfinite(max_gap) or max_gap < AUTO_EDIT_MIN_MAX_GAP_S:
+    # 1. 有限性。payload 由来（ユーザーが直せる）と settings 由来（min_overlap_s。
+    #    UI の「詳細設定（無音判定）」側の値）でメッセージを出し分け、どこを直せば
+    #    よいかが分かるようにする。
+    for name, value in (
+        ("auto_edit_max_gap_s", max_gap),
+        ("auto_edit_keep_gap_s", keep_gap),
+        ("auto_edit_max_overlap_s", max_ov),
+        ("auto_edit_keep_overlap_s", keep_ov),
+    ):
+        if not math.isfinite(value):
+            raise HTTPException(
+                status_code=400, detail=f"{name} には有限の数値を指定してください"
+            )
+    if not math.isfinite(min_ov):
+        # settings 側の値なので、直す場所が auto_edit の閾値欄ではないことを明示する。
+        raise HTTPException(
+            status_code=400,
+            detail="min_overlap_s（被り検出の下限）に有限の数値を設定してください",
+        )
+    # 2. max_gap_s の下限
+    if max_gap < AUTO_EDIT_MIN_MAX_GAP_S:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -2153,6 +2184,7 @@ def _validate_auto_edit_thresholds(
                 "（0 はすべての無音を詰めます）"
             ),
         )
+    # 3. 既存の複合述語（ミラー3箇所と同期。変更しない）
     if keep_gap < 0 or max_gap < keep_gap or max_ov < min_ov or not (0 <= keep_ov < min_ov):
         raise HTTPException(status_code=400, detail="invalid auto edit thresholds")
 
